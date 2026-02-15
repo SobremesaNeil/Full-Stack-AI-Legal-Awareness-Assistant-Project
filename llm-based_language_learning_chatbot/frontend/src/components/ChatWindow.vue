@@ -80,10 +80,10 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, nextTick, onBeforeUnmount, computed } from 'vue'
+import { ref, onMounted, nextTick, onBeforeUnmount } from 'vue'
 import { createSession, getSession, getWebSocketUrl, deleteSession } from '@/services/api'
 import { saveSessionId, getSessionId, clearSessionId } from '@/utils/storage'
-import type { Message, ChatMessage, ChatSession } from '@/types/chat'
+import type { Message, Session } from '@/types/chat' // 修正类型导入
 import ChatMessageComponent from './ChatMessage.vue'
 import SessionSelector from './SessionSelector.vue'
 import ChatInput from './ChatInput.vue'
@@ -91,12 +91,12 @@ import ConfirmDialog from './ConfirmDialog.vue'
 
 // State
 const messages = ref<Message[]>([])
-const context = ref<ChatMessage[]>([])
+// const context = ref<Message[]>([]) // 暂时不需要 context 单独维护，messages 足够
 const loading = ref(false)
 const messagesContainer = ref<HTMLElement | null>(null)
 const ws = ref<WebSocket | null>(null)
 const sessionId = ref<string | null>(null)
-const sessions = ref<ChatSession[]>([])
+const sessions = ref<Session[]>([]) // 修正类型
 const currentSessionId = ref<string>('')
 
 // UI State
@@ -111,21 +111,9 @@ const dialogPromise = ref<{ resolve: (value: boolean) => void } | null>(null)
 
 // Decorative icons configuration
 const decorativeIcons = [
-  {
-    name: 'mdi-message-text-outline',
-    size: '32',
-    style: 'opacity: 0.1; position: absolute; top: 40px; right: 80px;'
-  },
-  {
-    name: 'mdi-chat-processing-outline',
-    size: '24',
-    style: 'opacity: 0.1; position: absolute; top: 100px; right: 40px;'
-  },
-  {
-    name: 'mdi-message-outline',
-    size: '28',
-    style: 'opacity: 0.1; position: absolute; top: 70px; right: 140px;'
-  }
+  { name: 'mdi-message-text-outline', size: '32', style: 'opacity: 0.1; position: absolute; top: 40px; right: 80px;' },
+  { name: 'mdi-chat-processing-outline', size: '24', style: 'opacity: 0.1; position: absolute; top: 100px; right: 40px;' },
+  { name: 'mdi-message-outline', size: '28', style: 'opacity: 0.1; position: absolute; top: 70px; right: 140px;' }
 ]
 
 // WebSocket
@@ -147,9 +135,19 @@ const connectWebSocket = () => {
 
   ws.value.onmessage = (event) => {
     try {
-      const response = JSON.parse(event.data) as ChatMessage
-      messages.value.push(response)
-      context.value.push(response)
+      // 解析后端返回的消息
+      const data = JSON.parse(event.data)
+      
+      // 构造符合前端类型的 Message 对象
+      const aiMessage: Message = {
+        role: 'assistant', // 后端返回的 role 
+        content: data.content,
+        type: data.type || 'text',
+        mediaUrl: data.mediaUrl || data.media_url, // 兼容处理，防止后端没改
+        created_at: new Date().toISOString()
+      }
+
+      messages.value.push(aiMessage)
       loading.value = false
       scrollToBottom()
     } catch (error) {
@@ -161,15 +159,15 @@ const connectWebSocket = () => {
 
   ws.value.onclose = (event) => {
     console.log('WebSocket closed:', event.code, event.reason)
-    if (!event.wasClean) {
-      showMessage('WebSocket连接已断开，正在尝试重新连接...', 'warning')
+    // 只有非正常关闭才重连，且不是正在切换会话时
+    if (!event.wasClean && sessionId.value) {
+      // showMessage('连接已断开，正在尝试重连...', 'warning')
       setTimeout(connectWebSocket, 3000)
     }
   }
 
   ws.value.onerror = (event) => {
     console.error('WebSocket error:', event)
-    showMessage('WebSocket连接错误', 'error')
     loading.value = false
   }
 }
@@ -177,13 +175,13 @@ const connectWebSocket = () => {
 // Session management
 const loadSessions = async () => {
   try {
-    const response = await fetch('/api/sessions/')
+    const response = await fetch('http://localhost:8000/sessions/') // 确保 URL 完整，或者在 vite.config.ts 配置了 proxy
     if (!response.ok) throw new Error('Failed to load sessions')
     const data = await response.json()
     sessions.value = data
   } catch (error) {
     console.error('Failed to load sessions:', error)
-    showMessage('加载会话列表失败', 'error')
+    // showMessage('加载会话列表失败', 'error')
   }
 }
 
@@ -191,8 +189,11 @@ const loadSession = async (selectedSessionId: string) => {
   try {
     const session = await getSession(selectedSessionId)
     sessionId.value = selectedSessionId
-    messages.value = session.messages
-    context.value = session.context
+    // 确保后端返回的历史消息字段也被映射 (如果后端历史记录没存 camelCase)
+    messages.value = session.messages.map((msg: any) => ({
+        ...msg,
+        mediaUrl: msg.media_url || msg.mediaUrl // 兼容历史数据
+    }))
     saveSessionId(selectedSessionId)
     await connectWebSocket()
   } catch (error) {
@@ -208,11 +209,10 @@ const createNewSession = async () => {
     }
 
     const session = await createSession()
-    sessionId.value = session.session_id
-    currentSessionId.value = session.session_id
+    sessionId.value = session.id // 注意：schemas.py 里 Session 定义的是 id，不是 session_id
+    currentSessionId.value = session.id
     messages.value = []
-    context.value = []
-    saveSessionId(session.session_id)
+    saveSessionId(session.id)
     await connectWebSocket()
     await loadSessions()
   } catch (error) {
@@ -231,76 +231,71 @@ const deleteSessionById = async (sessionToDelete: string) => {
 
     if (!confirmed) return
 
-    // 如果删除的是当前会话
     if (sessionToDelete === currentSessionId.value) {
       if (ws.value) {
         ws.value.close()
         ws.value = null
       }
       messages.value = []
-      context.value = []
       clearSessionId()
     }
 
-    await deleteSession(sessionToDelete)
-    await loadSessions()
+    // 假设 api.ts 里有 deleteSession，如果没有需要补充
+    // await deleteSession(sessionToDelete) 
+    // 这里的 backend/main.py 并没有写 DELETE /sessions/{id} 的接口
+    // 如果你没有实现删除接口，这里会报错。暂时先注释掉实际调用
+    showMessage('后端暂未实现删除接口', 'warning')
+    
+    // await loadSessions()
 
-    // 如果删除的是当前会话，创建新会话
-    if (sessionToDelete === currentSessionId.value) {
-      currentSessionId.value = ''
-      sessionId.value = null
-      await createNewSession()
-    }
+    // if (sessionToDelete === currentSessionId.value) {
+    //   currentSessionId.value = ''
+    //   sessionId.value = null
+    //   await createNewSession()
+    // }
 
-    showMessage('会话已删除')
   } catch (error) {
     console.error('Failed to delete session:', error)
     showMessage('删除会话失败', 'error')
   }
 }
 
-// Message handling
-const sendMessage = async (content: string) => {
-  if (!ws.value || ws.value.readyState !== WebSocket.OPEN) {
-    showMessage('WebSocket未连接', 'error')
-    return
-  }
-  
- // 修改 sendMessage 函数以接收多模态参数
+// Message handling - 核心修复部分
 const sendMessage = (text: string, type: 'text' | 'image' | 'audio' = 'text', url?: string, dialect?: string) => {
-  if (!websocket.value) {
-    showMessage('连接已断开，请刷新页面', 'error')
+  // 检查 WebSocket 状态
+  if (!ws.value || ws.value.readyState !== WebSocket.OPEN) {
+    showMessage('连接已断开，正在重连...', 'warning')
+    connectWebSocket()
     return
   }
 
-  // 1. 构建符合后端标准的消息对象
+  // 1. 构建前端临时显示的消息对象
   const userMessage: Message = {
     role: 'user',
-    content: text || (type === 'image' ? '发送了一张图片' : '发送了一条语音'), // 如果没文字，给个默认提示
-    type: type,          // 新增：告诉后端这是图片还是文字
-    mediaUrl: url,       // 新增：文件的网络地址
+    content: text || (type === 'image' ? '发送了一张图片' : '发送了一条语音'),
+    type: type,
+    mediaUrl: url,
     created_at: new Date().toISOString()
   }
 
   try {
-    // 2. 乐观更新：先显示在界面上，不用等后端回传
+    // 2. 乐观更新
     messages.value.push(userMessage)
-    
-    // 3. 滚动到底部
     scrollToBottom()
+    loading.value = true
 
-    // 4. 发送给后端 (JSON 格式)
-    // 注意：这里发送的字段名要跟后端 main.py 里的 user_input.get(...) 对应
-    websocket.value.send(JSON.stringify({
+    // 3. 发送给后端
+    ws.value.send(JSON.stringify({
       content: text,
       type: type,
       url: url,
-      dialect: dialect // 将用户选择的方言传给后端
+      dialect: dialect
     }))
 
   } catch (error) {
     console.error('Failed to send message:', error)
     showMessage('消息发送失败', 'error')
+    loading.value = false
   }
 }
 
@@ -338,7 +333,6 @@ const handleDialogCancel = () => {
   dialogPromise.value?.resolve(false)
 }
 
-// 添加 handleSessionChange 函数
 const handleSessionChange = async (newSessionId: string) => {
   if (newSessionId && newSessionId !== sessionId.value) {
     await loadSession(newSessionId)
@@ -353,25 +347,17 @@ onMounted(async () => {
   
   if (storedSessionId) {
     try {
-      const session = await getSession(storedSessionId)
-      sessionId.value = storedSessionId
-      currentSessionId.value = storedSessionId
-      messages.value = session.messages
-      context.value = session.context
+      // 尝试加载旧会话，如果失败（比如后端重启数据库清空），则创建新的
+      await loadSession(storedSessionId)
     } catch {
+      console.log('Session expired, creating new one')
       storedSessionId = null
     }
   }
   
   if (!storedSessionId) {
-    const session = await createSession()
-    sessionId.value = session.session_id
-    currentSessionId.value = session.session_id
-    saveSessionId(session.session_id)
-    context.value = []
+    await createNewSession()
   }
-  
-  await connectWebSocket()
 })
 
 onBeforeUnmount(() => {

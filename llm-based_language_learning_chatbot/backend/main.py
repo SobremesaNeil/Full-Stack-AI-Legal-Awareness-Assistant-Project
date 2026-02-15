@@ -108,11 +108,12 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str, db: Session 
             db.commit()
 
             # 4. 发送回前端
+            # 4. 发送回前端 (注意这里把 media_url 改为 mediaUrl 以匹配前端)
             await websocket.send_json({
                 "role": "assistant",
                 "content": ai_result["content"],
                 "type": ai_result["message_type"],
-                "media_url": ai_result["media_url"]
+                "mediaUrl": ai_result["media_url"]  # <--- 修改这里: media_url -> mediaUrl
             })
 
     except WebSocketDisconnect:
