@@ -9,3 +9,5 @@ python-multipart
 aiofiles
 azure-cognitiveservices-speech
 httpx
+asyncpg
+python-multipart

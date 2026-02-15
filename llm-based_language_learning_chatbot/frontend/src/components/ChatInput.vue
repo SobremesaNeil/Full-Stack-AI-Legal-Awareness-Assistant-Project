@@ -1,143 +1,131 @@
 <template>
-  <div class="input-container">
-    <div class="toolbar">
-      <label class="tool-btn">
-        📷
-        <input type="file" accept="image/*" @change="handleImageUpload" hidden />
-      </label>
-      
-      <select v-model="selectedDialect" class="dialect-select">
-        <option value="mandarin">普通话</option>
-        <option value="cantonese">粤语</option>
-        <option value="sichuan">四川话</option>
-      </select>
-    </div>
+  <v-sheet class="bg-transparent">
+    <v-expand-transition>
+      <div v-if="previewUrl || isRecording" class="mb-2 px-2 d-flex align-center">
+        <v-chip v-if="previewUrl" closable @click:close="clearFile" class="mr-2">
+           <v-icon start icon="mdi-image"></v-icon> 已选图片
+        </v-chip>
+        <v-chip v-if="isRecording" color="error" variant="flat" class="animate-pulse">
+           <v-icon start icon="mdi-microphone"></v-icon> 正在录音...
+        </v-chip>
+      </div>
+    </v-expand-transition>
 
-    <v-textarea
-      v-model="message"
-      :placeholder="isUploading ? '正在上传图片...' : '输入法律问题，支持描述图片...'"
-      auto-grow
-      rows="1"
-      max-rows="5"
-      variant="outlined"
-      hide-details
-      @keydown.enter.prevent="sendMessage"
-      :disabled="isLoading || isUploading"
-    >
-      <template v-slot:append-inner>
-        <v-btn
-          icon="mdi-send"
-          variant="text"
-          color="primary"
-          @click="sendMessage"
-          :loading="isLoading"
-          :disabled="!message.trim() && !pendingImage"
-        ></v-btn>
-      </template>
-    </v-textarea>
-    
-    <div v-if="pendingImage" class="preview-chip">
-      图片已就绪 ({{ pendingImage.name }}) 
-      <span @click="pendingImage = null" style="cursor:pointer; color:red">✕</span>
-    </div>
-  </div>
+    <v-card elevation="4" rounded="xl" class="d-flex align-end pa-2 border">
+      <v-btn icon variant="text" color="grey-darken-1" class="mb-1" @click="triggerFileInput">
+        <v-icon icon="mdi-paperclip"></v-icon>
+        <v-tooltip activator="parent" location="top">上传图片</v-tooltip>
+      </v-btn>
+      <input type="file" ref="fileInput" accept="image/*" style="display: none" @change="handleFileChange" />
+
+      <v-textarea
+        v-model="message"
+        placeholder="输入法律问题，Shift + Enter 换行..."
+        variant="plain"
+        auto-grow
+        rows="1"
+        max-rows="5"
+        hide-details
+        class="flex-grow-1 mx-2 custom-textarea"
+        @keydown.enter.exact.prevent="sendMessage"
+      ></v-textarea>
+
+      <v-menu location="top">
+        <template v-slot:activator="{ props }">
+          <v-btn icon variant="text" color="grey-darken-1" class="mb-1" v-bind="props">
+            <v-icon icon="mdi-microphone-outline"></v-icon>
+          </v-btn>
+        </template>
+        <v-list density="compact">
+          <v-list-subheader>选择语音方言</v-list-subheader>
+          <v-list-item @click="selectedDialect='mandarin'" value="mandarin">
+            <template v-slot:prepend><v-icon :color="selectedDialect==='mandarin'?'primary':''">mdi-check</v-icon></template>
+            普通话
+          </v-list-item>
+          <v-list-item @click="selectedDialect='sichuan'" value="sichuan">
+            <template v-slot:prepend><v-icon :color="selectedDialect==='sichuan'?'primary':''">mdi-check</v-icon></template>
+            四川话
+          </v-list-item>
+          <v-list-item @click="selectedDialect='cantonese'" value="cantonese">
+            <template v-slot:prepend><v-icon :color="selectedDialect==='cantonese'?'primary':''">mdi-check</v-icon></template>
+            粤语
+          </v-list-item>
+        </v-list>
+      </v-menu>
+
+      <v-btn
+        :disabled="!message.trim() && !previewUrl"
+        :loading="loading"
+        icon="mdi-send"
+        color="primary"
+        variant="flat"
+        class="mb-1 ml-1"
+        @click="sendMessage"
+      ></v-btn>
+    </v-card>
+  </v-sheet>
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue';
-import { useChatStore } from '@/stores/counter'; // 假设用了Pinia，或者直接emit
+import { ref } from 'vue'
 
-const props = defineProps<{
-  isLoading: boolean;
-}>();
+const props = defineProps<{ loading: boolean }>()
+const emit = defineEmits(['send'])
 
-const emit = defineEmits<{
-  (e: 'send', text: string, type: string, url?: string, dialect?: string): void;
-}>();
+const message = ref('')
+const fileInput = ref<HTMLInputElement | null>(null)
+const previewUrl = ref<string | null>(null)
+const selectedDialect = ref('mandarin')
+const isRecording = ref(false) // 暂未实现真实录音逻辑，仅UI占位
 
-const message = ref('');
-const selectedDialect = ref('mandarin');
-const isUploading = ref(false);
-const pendingImage = ref<{file: File, url: string, name: string} | null>(null);
-
-// 处理图片上传到服务器
-const handleImageUpload = async (event: Event) => {
-  const file = (event.target as HTMLInputElement).files?.[0];
-  if (!file) return;
-
-  isUploading.value = true;
-  const formData = new FormData();
-  formData.append('file', file);
-
+// 处理文件
+const triggerFileInput = () => fileInput.value?.click()
+const handleFileChange = async (event: Event) => {
+  const file = (event.target as HTMLInputElement).files?.[0]
+  if (!file) return
+  
+  // 这里应该调用 API 上传图片换取 URL，为了简化先用 POST /upload/
+  const formData = new FormData()
+  formData.append('file', file)
+  
   try {
-    const res = await fetch('http://localhost:8000/upload/', {
-      method: 'POST',
-      body: formData
-    });
-    const data = await res.json();
-    pendingImage.value = {
-      file: file,
-      url: data.url,
-      name: file.name
-    };
-  } catch (error) {
-    alert('图片上传失败');
-  } finally {
-    isUploading.value = false;
+    const res = await fetch('http://localhost:8000/upload/', { method: 'POST', body: formData })
+    const data = await res.json()
+    previewUrl.value = data.url // 拿到后端返回的 URL
+  } catch (e) {
+    console.error('Upload failed', e)
   }
-};
+}
+
+const clearFile = () => {
+  previewUrl.value = null
+  if (fileInput.value) fileInput.value.value = ''
+}
 
 const sendMessage = () => {
-  if ((!message.value.trim() && !pendingImage.value) || props.isLoading) return;
-
-  // 1. 如果有图片，发送图片类型消息
-  if (pendingImage.value) {
-    emit('send', message.value, 'image', pendingImage.value.url, selectedDialect.value);
-    pendingImage.value = null;
-  } else {
-    // 2. 否则发送纯文本
-    emit('send', message.value, 'text', undefined, selectedDialect.value);
-  }
+  if (!message.value.trim() && !previewUrl.value) return
   
-  message.value = '';
-};
+  if (previewUrl.value) {
+    emit('send', message.value, 'image', previewUrl.value)
+    clearFile()
+  } else {
+    emit('send', message.value, 'text', null, selectedDialect.value)
+  }
+  message.value = ''
+}
 </script>
 
 <style scoped>
-.input-container {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  background: #fff;
-  padding: 10px;
-  border-top: 1px solid #eee;
+.custom-textarea :deep(textarea) {
+  padding-top: 10px !important;
+  max-height: 150px;
 }
-.toolbar {
-  display: flex;
-  gap: 15px;
-  align-items: center;
-  padding-left: 5px;
+.animate-pulse {
+  animation: pulse 1.5s infinite;
 }
-.tool-btn {
-  cursor: pointer;
-  font-size: 1.2rem;
-  transition: transform 0.2s;
-}
-.tool-btn:hover {
-  transform: scale(1.1);
-}
-.dialect-select {
-  border: 1px solid #ccc;
-  border-radius: 4px;
-  padding: 2px 5px;
-  font-size: 0.8rem;
-}
-.preview-chip {
-  font-size: 0.8rem;
-  color: #666;
-  background: #f0f0f0;
-  padding: 4px 8px;
-  border-radius: 4px;
-  width: fit-content;
+@keyframes pulse {
+  0% { opacity: 1; }
+  50% { opacity: 0.5; }
+  100% { opacity: 1; }
 }
 </style>
