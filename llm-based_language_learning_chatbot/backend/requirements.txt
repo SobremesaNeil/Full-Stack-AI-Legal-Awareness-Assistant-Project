@@ -11,3 +11,7 @@ azure-cognitiveservices-speech
 httpx
 asyncpg
 python-multipart
+chromadb
+passlib[bcrypt]
+python-jose[cryptography]
+tiktoken
