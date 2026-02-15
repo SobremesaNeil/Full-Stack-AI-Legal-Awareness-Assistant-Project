@@ -17,18 +17,19 @@ export default defineConfig({
       '@': fileURLToPath(new URL('./src', import.meta.url))
     },
   },
-  server: {
-    proxy: {
-      '/api': {
-        target: 'http://localhost:8000',
-        changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/api/, '')
-      },
-      '/ws': {
-        target: 'ws://localhost:8000',
-        ws: true,
-        changeOrigin: true
-      }
+ server: {
+  proxy: {
+    // 将 '/api' 修改为 '/sessions'，因为这是你报错里出现的路径
+    '/sessions': {
+      target: 'http://127.0.0.1:8000', // 建议改用 127.0.0.1 避开 IPv6 锁定
+      changeOrigin: true,
+      // 如果后端接口本身没有 /api，这里就不用 rewrite
+    },
+    '/ws': {
+      target: 'ws://127.0.0.1:8000',
+      ws: true,
+      changeOrigin: true
     }
   }
+}
 })

@@ -266,30 +266,41 @@ const sendMessage = async (content: string) => {
     return
   }
   
+ // 修改 sendMessage 函数以接收多模态参数
+const sendMessage = (text: string, type: 'text' | 'image' | 'audio' = 'text', url?: string, dialect?: string) => {
+  if (!websocket.value) {
+    showMessage('连接已断开，请刷新页面', 'error')
+    return
+  }
+
+  // 1. 构建符合后端标准的消息对象
   const userMessage: Message = {
     role: 'user',
-    content,
+    content: text || (type === 'image' ? '发送了一张图片' : '发送了一条语音'), // 如果没文字，给个默认提示
+    type: type,          // 新增：告诉后端这是图片还是文字
+    mediaUrl: url,       // 新增：文件的网络地址
     created_at: new Date().toISOString()
   }
-  
+
   try {
-    loading.value = true
+    // 2. 乐观更新：先显示在界面上，不用等后端回传
     messages.value.push(userMessage)
-    context.value.push({
-      role: userMessage.role,
-      content: userMessage.content
-    })
     
-    ws.value.send(JSON.stringify({
-      content: userMessage.content,
-      context: context.value
-    }))
-    
+    // 3. 滚动到底部
     scrollToBottom()
+
+    // 4. 发送给后端 (JSON 格式)
+    // 注意：这里发送的字段名要跟后端 main.py 里的 user_input.get(...) 对应
+    websocket.value.send(JSON.stringify({
+      content: text,
+      type: type,
+      url: url,
+      dialect: dialect // 将用户选择的方言传给后端
+    }))
+
   } catch (error) {
     console.error('Failed to send message:', error)
-    showMessage('发送消息失败', 'error')
-    loading.value = false
+    showMessage('消息发送失败', 'error')
   }
 }
 

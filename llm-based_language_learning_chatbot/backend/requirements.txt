@@ -1,12 +1,11 @@
 fastapi
 uvicorn
-python-dotenv
 sqlalchemy
 psycopg2-binary
-pydantic
+python-dotenv
 openai
-python-jose[cryptography]
-passlib[bcrypt]
+pydantic
 python-multipart
-websockets
-alembic
+aiofiles
+azure-cognitiveservices-speech
+httpx

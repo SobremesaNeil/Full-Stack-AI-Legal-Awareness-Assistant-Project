@@ -1,32 +1,31 @@
-from pydantic import BaseModel, ConfigDict
-from typing import List, Optional
+from pydantic import BaseModel
 from datetime import datetime
+from typing import Optional, List
 
 class MessageBase(BaseModel):
     role: str
     content: str
+    message_type: str = "text"
+    media_url: Optional[str] = None
 
 class MessageCreate(MessageBase):
     pass
 
 class Message(MessageBase):
     id: int
-    chat_session_id: int
+    session_id: str
     created_at: datetime
 
-    model_config = ConfigDict(from_attributes=True, json_encoders={datetime: lambda dt: dt.isoformat()})
+    class Config:
+        from_attributes = True
 
-class ChatSessionBase(BaseModel):
-    session_id: str
-
-class ChatSessionCreate(ChatSessionBase):
+class SessionBase(BaseModel):
     pass
 
-class ChatSession(ChatSessionBase):
-    id: int
+class Session(SessionBase):
+    id: str
     created_at: datetime
-    updated_at: datetime
-    context: List[dict]
     messages: List[Message] = []
 
-    model_config = ConfigDict(from_attributes=True, json_encoders={datetime: lambda dt: dt.isoformat()}) 
+    class Config:
+        from_attributes = True
