@@ -1,97 +1,80 @@
 <template>
-  <div :class="['d-flex', isUser ? 'justify-end' : 'justify-start', 'message-row']">
-    
-    <v-avatar v-if="!isUser" color="primary" variant="tonal" size="36" class="mr-3 align-self-start mt-1">
-      <v-icon icon="mdi-scale-balance" size="20"></v-icon>
-    </v-avatar>
-
-    <div style="max-width: 85%;">
-      <div v-if="!isUser" class="text-caption text-grey ml-1 mb-1">普法小助手</div>
-
-      <v-sheet
-        :color="isUser ? 'primary' : 'white'"
-        :class="[
-          'px-4 py-3',
-          'elevation-1',
-          isUser ? 'rounded-be-0' : 'rounded-bs-0', 
-          'rounded-xl'
-        ]"
-        class="message-bubble position-relative"
-      >
-        <v-img
-          v-if="message.mediaUrl && (message.type === 'image' || message.type === 'mindmap')"
-          :src="message.mediaUrl"
-          max-width="100%"
-          max-height="400"
-          class="rounded-lg bg-grey-lighten-4 mb-2"
-          cover
-        ></v-img>
-
-        <div v-if="message.mediaUrl && message.type === 'audio'" class="d-flex align-center gap-2">
-           <v-btn icon="mdi-play" variant="text" :color="isUser?'white':'primary'" size="small"></v-btn>
-           <audio controls :src="message.mediaUrl" class="w-100" style="height: 32px;"></audio>
-        </div>
-
-        <div 
-          v-if="message.content"
-          class="markdown-body"
-          :class="{ 'text-white': isUser }"
-          v-html="renderedContent"
-        ></div>
-      </v-sheet>
+  <div :class="['message', message.role]">
+    <div class="avatar">
+      {{ message.role === 'user' ? '👤' : '⚖️' }}
+    </div>
+    <div class="content-wrapper">
+      <div class="bubble" v-html="parsedContent"></div>
       
-      <div :class="['text-caption text-grey mt-1', isUser ? 'text-right mr-1' : 'ml-1']">
-        {{ formatTime(message.created_at) }}
+      <img v-if="message.media_url" :src="message.media_url" class="media-img" />
+
+      <div v-if="message.citations" class="citations">
+        <h4>📚 法律依据:</h4>
+        <div class="citation-text">{{ message.citations }}</div>
+      </div>
+
+      <div v-if="message.role === 'assistant'" class="feedback-actions">
+        <button 
+          @click="sendFeedback(1)" 
+          :class="{ active: feedbackStatus === 1 }"
+          title="回答准确"
+        >👍</button>
+        <button 
+          @click="sendFeedback(-1)" 
+          :class="{ active: feedbackStatus === -1 }"
+          title="回答有误"
+        >👎</button>
       </div>
     </div>
-
-    <v-avatar v-if="isUser" color="grey-lighten-3" size="36" class="ml-3 align-self-start mt-1">
-      <v-img src="https://api.dicebear.com/7.x/avataaars/svg?seed=Felix" alt="User"></v-img>
-    </v-avatar>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { marked } from 'marked'
+import { submitFeedback } from '@/services/api'
 import type { Message } from '@/types/chat'
 
-const props = defineProps<{
-  message: Message
-}>()
+const props = defineProps<{ message: Message }>()
+const feedbackStatus = ref(0) // 0=none, 1=like, -1=dislike
 
-const isUser = computed(() => props.message.role === 'user')
-
-const renderedContent = computed(() => {
-  if (!props.message.content) return ''
-  // 简单配置 marked
-  return marked(props.message.content, { async: false })
+const parsedContent = computed(() => {
+  return marked(props.message.content || '')
 })
 
-const formatTime = (isoString?: string) => {
-  if (!isoString) return ''
-  const date = new Date(isoString)
-  return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
+async function sendFeedback(score: number) {
+  if (feedbackStatus.value === score) return // Prevent double click
+  try {
+    // 假设 message 对象里有 id (后端已返回)
+    if (props.message.messageId) {
+       await submitFeedback(props.message.messageId, score)
+       feedbackStatus.value = score
+       alert(score === 1 ? '感谢您的好评！' : '感谢反馈，专家稍后会进行纠偏。')
+    }
+  } catch (e) {
+    console.error(e)
+  }
 }
 </script>
 
 <style scoped>
-/* 针对用户气泡内的 markdown 进行特殊颜色覆盖 */
-.markdown-body.text-white :deep(p),
-.markdown-body.text-white :deep(h1),
-.markdown-body.text-white :deep(h2),
-.markdown-body.text-white :deep(li),
-.markdown-body.text-white :deep(strong) {
-  color: white !important;
-}
+.message { display: flex; margin-bottom: 1.5rem; gap: 10px; }
+.message.user { flex-direction: row-reverse; }
+.avatar { font-size: 1.5rem; width: 40px; height: 40px; background: #eee; border-radius: 50%; display: flex; align-items: center; justify-content: center; }
+.content-wrapper { max-width: 70%; display: flex; flex-direction: column; gap: 5px; }
+.bubble { padding: 12px 16px; border-radius: 12px; line-height: 1.5; }
+.user .bubble { background: #007bff; color: white; border-bottom-right-radius: 2px; }
+.assistant .bubble { background: #f1f1f1; color: #333; border-bottom-left-radius: 2px; }
+.media-img { max-width: 200px; border-radius: 8px; margin-top: 5px; }
 
-.message-row {
-  /* 简单的入场动画 */
-  animation: slideIn 0.3s ease-out;
-}
+/* 引用样式 */
+.citations { font-size: 0.85rem; background: #fffbe6; border: 1px solid #ffe58f; padding: 8px; border-radius: 4px; color: #555; }
+.citations h4 { margin: 0 0 4px 0; color: #d48806; font-size: 0.85rem; }
+.citation-text { white-space: pre-wrap; }
 
-@keyframes slideIn {
-  from { opacity: 0; transform: translateY(10px); }
-  to { opacity: 1; transform: translateY(0); }
-}
+/* 反馈按钮 */
+.feedback-actions { display: flex; gap: 8px; margin-top: 4px; }
+.feedback-actions button { background: none; border: none; cursor: pointer; opacity: 0.5; transition: opacity 0.2s; font-size: 1.1rem; }
+.feedback-actions button:hover { opacity: 1; }
+.feedback-actions button.active { opacity: 1; transform: scale(1.2); }
 </style>
