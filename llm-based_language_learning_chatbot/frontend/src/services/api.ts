@@ -101,3 +101,28 @@ export async function replyTicket(ticketId: number, reply: string) {
   if (!response.ok) throw new Error('回复失败')
   return response.json()
 }
+
+// --- Rules (专家规则库 / 规则引擎) [新增] ---
+export async function getRules() {
+  const response = await authFetch('/admin/rules')
+  if (!response.ok) throw new Error('获取规则库失败')
+  return response.json()
+}
+
+export async function createRule(rule: { patterns: string[], answer: string, source: string, active: boolean }) {
+  const response = await authFetch('/admin/rules', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(rule)
+  })
+  if (!response.ok) throw new Error('创建规则失败')
+  return response.json()
+}
+
+export async function deleteRule(ruleId: number) {
+  const response = await authFetch(`/admin/rules/${ruleId}`, {
+    method: 'DELETE'
+  })
+  if (!response.ok) throw new Error('删除规则失败')
+  return response.json()
+}

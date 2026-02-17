@@ -12,8 +12,6 @@ class User(Base):
     hashed_password = Column(String)
     role = Column(String, default="user") # "user" 或 "admin"
     created_at = Column(DateTime, default=datetime.utcnow)
-    
-    # 关联
     sessions = relationship("Session", back_populates="user")
     tickets = relationship("Ticket", back_populates="user")
 
@@ -38,11 +36,7 @@ class Message(Base):
     message_type = Column(String, default="text") # text, image, audio, mindmap
     media_url = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
-    
-    # 新增：RAG 引用源 (存储 JSON 字符串)
     citations = Column(Text, nullable=True) 
-    
-    # 新增：反馈闭环字段
     feedback_score = Column(Integer, nullable=True) # 1=赞, -1=踩
     admin_correction = Column(Text, nullable=True) # 专家纠偏后的正确答案
     is_corrected = Column(Boolean, default=False)   # 是否已被专家处理
@@ -66,3 +60,12 @@ class Ticket(Base):
     updated_at = Column(DateTime, default=datetime.utcnow)
 
     user = relationship("User", foreign_keys=[user_id], back_populates="tickets")
+
+class Rule(Base):
+    __tablename__ = "rules"
+    id = Column(Integer, primary_key=True, index=True)
+    patterns = Column(Text) # 存储 JSON 字符串，例如 '["关键词1", "正则2"]'
+    answer = Column(Text)   # 标准回答
+    source = Column(String) # 法律依据来源
+    active = Column(Boolean, default=True) # 是否启用
+    created_at = Column(DateTime, default=datetime.utcnow)

@@ -1,6 +1,6 @@
 from pydantic import BaseModel
 from datetime import datetime
-from typing import Optional, List
+from typing import Optional, List, Any
 
 # --- Auth ---
 class Token(BaseModel):
@@ -72,3 +72,21 @@ class FeedbackCreate(BaseModel):
 class CorrectionCreate(BaseModel):
     message_id: int
     correction_content: str
+
+class RuleBase(BaseModel):
+    patterns: List[str] # 前端传数组，后端存 JSON
+    answer: str
+    source: str
+    active: bool = True
+
+class RuleCreate(RuleBase):
+    pass
+
+class RuleUpdate(RuleBase):
+    pass
+
+class Rule(RuleBase):
+    id: int
+    created_at: datetime
+    class Config:
+        from_attributes = True

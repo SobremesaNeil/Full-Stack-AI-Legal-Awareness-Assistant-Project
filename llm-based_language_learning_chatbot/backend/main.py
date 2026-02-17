@@ -1,35 +1,50 @@
-from fastapi import FastAPI, Depends, HTTPException, WebSocket, WebSocketDisconnect, UploadFile, File, Form, status
+from fastapi import FastAPI, Depends, HTTPException, WebSocket, WebSocketDisconnect, UploadFile, File, Form
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
-import models, schemas, auth_utils
+import models, schemas, auth_utils, rule_service # 引入 rule_service
 from database import engine, get_db
 from ai_service import get_legal_response, synthesize_dialect_audio
 from rag_service import init_knowledge_base
 import json, os, shutil, uuid
 from contextlib import asynccontextmanager
 
-# 生命周期：初始化数据库 + 向量库 + 默认管理员
+# --- 生命周期管理 ---
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # 1. 数据库建表
     async with engine.begin() as conn:
         await conn.run_sync(models.Base.metadata.create_all)
     
-    # 2. 初始化 RAG 知识库
+    # 2. 初始化 RAG 和 默认管理员
     init_knowledge_base()
     
-    # 3. 创建默认管理员 (admin/admin123) - 仅作演示，生产环境请删除
     async with AsyncSession(engine) as db:
-        result = await db.execute(select(models.User).filter(models.User.username == "admin"))
-        if not result.scalars().first():
-            hashed_pw = auth_utils.get_password_hash("admin123")
-            admin_user = models.User(username="admin", hashed_password=hashed_pw, role="admin")
-            db.add(admin_user)
+        # 创建默认管理员
+        res = await db.execute(select(models.User).filter(models.User.username == "admin"))
+        if not res.scalars().first():
+            hp = auth_utils.get_password_hash("admin123")
+            db.add(models.User(username="admin", hashed_password=hp, role="admin"))
             await db.commit()
-            print("默认管理员已创建: admin / admin123")
+            print("👤 管理员创建: admin/admin123")
+        
+        # 3. 【核心】加载规则库到内存
+        await rule_service.load_rules_from_db(db)
+        
+        # 如果规则库为空，注入一条演示规则
+        rule_check = await db.execute(select(models.Rule))
+        if not rule_check.scalars().first():
+            demo_rule = models.Rule(
+                patterns=json.dumps([r"客服.*电话", r"联系.*谁"]),
+                answer="我们的法律援助热线是 400-1234-5678。",
+                source="平台服务手册"
+            )
+            db.add(demo_rule)
+            await db.commit()
+            await rule_service.load_rules_from_db(db) # 再次刷新
+
     yield
 
 app = FastAPI(lifespan=lifespan)
@@ -80,9 +95,50 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends(), db: AsyncSessi
     user = result.scalars().first()
     if not user or not auth_utils.verify_password(form_data.password, user.hashed_password):
         raise HTTPException(status_code=401, detail="Incorrect username or password")
-    
     access_token = auth_utils.create_access_token(data={"sub": user.username})
     return {"access_token": access_token, "token_type": "bearer"}
+
+@app.get("/admin/rules", response_model=list[schemas.Rule])
+async def get_rules(admin: models.User = Depends(get_current_admin), db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(models.Rule).order_by(models.Rule.id.desc()))
+    rules = result.scalars().all()
+    # 将 JSON 字符串转回 list 给前端
+    for r in rules:
+        r.patterns = json.loads(r.patterns) 
+    return rules
+
+@app.post("/admin/rules", response_model=schemas.Rule)
+async def create_rule(rule: schemas.RuleCreate, admin: models.User = Depends(get_current_admin), db: AsyncSession = Depends(get_db)):
+    # 存入 JSON
+    db_rule = models.Rule(
+        patterns=json.dumps(rule.patterns, ensure_ascii=False),
+        answer=rule.answer,
+        source=rule.source,
+        active=rule.active
+    )
+    db.add(db_rule)
+    await db.commit()
+    await db.refresh(db_rule)
+    
+    # 🔥 核心：触发热更新
+    await rule_service.load_rules_from_db(db)
+    
+    db_rule.patterns = json.loads(db_rule.patterns) # 转换回对象返回给前端
+    return db_rule
+
+@app.delete("/admin/rules/{rule_id}")
+async def delete_rule(rule_id: int, admin: models.User = Depends(get_current_admin), db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(models.Rule).filter(models.Rule.id == rule_id))
+    rule = result.scalars().first()
+    if not rule:
+        raise HTTPException(404, "Rule not found")
+    
+    await db.delete(rule)
+    await db.commit()
+    
+    # 🔥 核心：触发热更新
+    await rule_service.load_rules_from_db(db)
+    return {"status": "deleted"}
 
 # --- API: Chat Sessions (支持匿名 + 登录) ---
 @app.post("/sessions/", response_model=schemas.Session)
@@ -230,6 +286,44 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str, db: AsyncSes
                 "type": ai_res["message_type"], "mediaUrl": ai_res["media_url"],
                 "citations": ai_res.get("citations"),
                 "messageId": ai_msg.id # 返回 ID 供前端点踩使用
+            })
+    except WebSocketDisconnect:
+        pass
+    
+@app.websocket("/ws/{session_id}")
+async def websocket_endpoint(websocket: WebSocket, session_id: str, db: AsyncSession = Depends(get_db)):
+    await websocket.accept()
+    try:
+        while True:
+            data = await websocket.receive_text()
+            try:
+                user_input = json.loads(data)
+            except:
+                continue
+
+            user_msg = models.Message(session_id=session_id, role="user", content=user_input.get("content"), message_type=user_input.get("type"), media_url=user_input.get("url"))
+            db.add(user_msg)
+            await db.commit()
+
+            hist_res = await db.execute(select(models.Message).filter(models.Message.session_id == session_id).order_by(models.Message.created_at))
+            history = hist_res.scalars().all()
+
+            # AI Service 内部现在会调用 check_rules (使用的是内存缓存，所以不需要传 db)
+            ai_res = await get_legal_response(history, user_input)
+
+            ai_msg = models.Message(
+                session_id=session_id, role="assistant", 
+                content=ai_res["content"], message_type=ai_res["message_type"], 
+                media_url=ai_res["media_url"], citations=ai_res.get("citations")
+            )
+            db.add(ai_msg)
+            await db.commit()
+
+            await websocket.send_json({
+                "role": "assistant", "content": ai_res["content"], 
+                "type": ai_res["message_type"], "mediaUrl": ai_res["media_url"],
+                "citations": ai_res.get("citations"),
+                "messageId": ai_msg.id
             })
     except WebSocketDisconnect:
         pass
