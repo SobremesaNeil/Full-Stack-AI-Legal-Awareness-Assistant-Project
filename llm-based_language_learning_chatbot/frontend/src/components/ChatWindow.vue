@@ -209,12 +209,18 @@ const connectWebSocket = () => {
     }
   }
 
+const retryCount = ref(0);
+const maxRetries = 5;
+
   ws.value.onclose = (event) => {
-    console.log('WebSocket closed:', event.code, event.reason)
-    if (!event.wasClean && sessionId.value) {
-      setTimeout(connectWebSocket, 3000)
+    if (retryCount.value < maxRetries) {
+        retryCount.value++;
+        setTimeout(connectWebSocket, 3000);
+    } else {
+        showMessage('连接已断开，请刷新页面重试', 'error');
     }
   }
+ws.value.onopen = () => { retryCount.value = 0; ... }
 
   ws.value.onerror = (event) => {
     console.error('WebSocket error:', event)

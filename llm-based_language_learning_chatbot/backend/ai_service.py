@@ -47,8 +47,12 @@ async def get_legal_response(history: list, latest_input: dict):
 
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
     
-    recent_history = history[-10:] 
-    for msg in recent_history:
+    if history and history[-1][0].content == text_content: # 伪代码逻辑
+        recent_history = history[-11:-1] # 取倒数第2条到倒数第11条
+    else:
+        recent_history = history[-10:]
+   
+        for msg in recent_history:
         messages.append({"role": msg.role, "content": msg.content})
 
     full_user_content = text_content

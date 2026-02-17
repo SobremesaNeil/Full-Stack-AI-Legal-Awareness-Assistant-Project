@@ -17,8 +17,10 @@ client = chromadb.PersistentClient(path=CHROMA_DATA_PATH)
 # 建议：生产环境应检查 API_KEY 是否存在，否则抛出异常
 api_key = os.getenv("OPENAI_API_KEY")
 if not api_key:
+    logger.error("无 OpenAI Key，RAG 服务将不可用")
     logger.warning("未检测到 OPENAI_API_KEY，RAG 功能将无法正常工作。")
-
+    openai_ef = None
+else:
 openai_ef = embedding_functions.OpenAIEmbeddingFunction(
     api_key=api_key or "sk-placeholder", # 防止初始化报错
     model_name="text-embedding-3-small"
@@ -57,6 +59,7 @@ def search_knowledge(query: str, n_results: int = 3):
         )
         
         knowledge_list = []
+        if not openai_ef: return []
         if results['documents']:
             for i, doc in enumerate(results['documents'][0]):
                 meta = results['metadatas'][0][i]

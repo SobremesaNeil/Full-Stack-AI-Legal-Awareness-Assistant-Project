@@ -12,6 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
+from fastapi import Request
 
 # 本地模块导入
 import models
@@ -223,8 +224,9 @@ async def submit_feedback(feedback: schemas.FeedbackCreate, db: AsyncSession = D
 # 4. 工单系统与文件上传 (Mixed)
 misc_router = APIRouter(tags=["Misc"])
 
+
 @misc_router.post("/upload/")
-async def upload_file(file: UploadFile = File(...)):
+async def upload_file(request: Request, file: UploadFile = File(...)):
     ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "wav"}
     filename = file.filename or "unknown"
     ext = filename.split(".")[-1].lower()
@@ -241,8 +243,9 @@ async def upload_file(file: UploadFile = File(...)):
     except Exception as e:
         logger.error(f"文件上传失败: {e}")
         raise HTTPException(500, "文件保存失败")
-        
-    return {"url": f"http://localhost:8000/{file_path}", "filename": new_filename}
+     
+     base_url = str(request.base_url).rstrip("/")
+    return {"url": f"{base_url}/{file_path}", ...}
 
 @misc_router.post("/tickets/", response_model=schemas.Ticket)
 async def create_ticket(ticket: schemas.TicketCreate, user: models.User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
