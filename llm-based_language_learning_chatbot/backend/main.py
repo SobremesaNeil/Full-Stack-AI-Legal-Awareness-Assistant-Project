@@ -276,6 +276,20 @@ async def reply_ticket(ticket_id: int, update: schemas.TicketUpdate, admin: mode
     await db.refresh(ticket)
     return ticket
 
+@misc_router.post("/tts/")
+async def tts_endpoint(text: str = Form(...), dialect: str = Form(...)):
+    # 简化的 Voice Map
+    v_map = {
+        "cantonese": "zh-HK-HiuGaaiNeural", 
+        "sichuan": "zh-CN-Sichuan-YunxiNeural", 
+        "mandarin": "zh-CN-XiaoxiaoNeural"
+    }
+    # 注意：这里调用的是 ai_service 里的函数
+    url = await synthesize_dialect_audio(text, v_map.get(dialect, "zh-CN-XiaoxiaoNeural"))
+    if not url: 
+        raise HTTPException(500, "TTS 生成失败")
+    return {"audio_url": url}
+
 # --- 核心修复：WebSocket Endpoint ---
 # 说明：这是原代码中被定义了两次的部分，现已合并并增强错误处理
 @app.websocket("/ws/{session_id}")
