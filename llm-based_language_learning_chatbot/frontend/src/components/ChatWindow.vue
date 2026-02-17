@@ -130,7 +130,7 @@
 
 <script setup lang="ts">
 import { ref, onMounted, nextTick, onBeforeUnmount } from 'vue'
-import { useDisplay } from 'vuetify' // 引入 Vuetify 的响应式工具
+import { useDisplay } from 'vuetify'
 import { createSession, getSession, getWebSocketUrl } from '@/services/api'
 import { saveSessionId, getSessionId, clearSessionId } from '@/utils/storage'
 import type { Message, Session } from '@/types/chat'
@@ -141,7 +141,7 @@ import ConfirmDialog from './ConfirmDialog.vue'
 
 // --- 响应式布局状态 ---
 const { mdAndUp } = useDisplay()
-const drawer = ref(true) // 侧边栏开关
+const drawer = ref(true)
 
 // --- 快捷建议 ---
 const suggestedQuestions = [
@@ -151,7 +151,7 @@ const suggestedQuestions = [
   '公司无故辞退我合法吗？'
 ]
 
-// --- State (保留您原有的状态变量) ---
+// --- State ---
 const messages = ref<Message[]>([])
 const loading = ref(false)
 const messagesContainer = ref<HTMLElement | null>(null)
@@ -170,7 +170,11 @@ const dialogText = ref('')
 const dialogType = ref<'info' | 'warning' | 'error'>('info')
 const dialogPromise = ref<{ resolve: (value: boolean) => void } | null>(null)
 
-// --- WebSocket Logic (保留原逻辑) ---
+// --- WebSocket Logic ---
+// 核心修复：retryCount 必须定义在函数外部，防止递归调用时重置！
+const retryCount = ref(0);
+const maxRetries = 5;
+
 const connectWebSocket = () => {
   if (!sessionId.value) return
   
@@ -185,6 +189,7 @@ const connectWebSocket = () => {
   ws.value.onopen = () => {
     console.log('WebSocket connected')
     loading.value = false
+    retryCount.value = 0; // 连接成功，重置计数
   }
 
   ws.value.onmessage = (event) => {
@@ -195,7 +200,8 @@ const connectWebSocket = () => {
         role: 'assistant',
         content: data.content,
         type: data.type || 'text',
-        mediaUrl: data.mediaUrl || data.media_url, 
+        // 【关键修复】这里必须用 media_url 匹配 TypeScript 接口定义
+        media_url: data.mediaUrl || data.media_url, 
         created_at: new Date().toISOString()
       }
 
@@ -209,18 +215,17 @@ const connectWebSocket = () => {
     }
   }
 
-const retryCount = ref(0);
-const maxRetries = 5;
-
   ws.value.onclose = (event) => {
+    // 【关键修复】使用外部定义的 retryCount
     if (retryCount.value < maxRetries) {
         retryCount.value++;
+        console.log(`Connection lost. Retrying (${retryCount.value}/${maxRetries})...`)
         setTimeout(connectWebSocket, 3000);
     } else {
+        console.log('WebSocket connection failed after max retries')
         showMessage('连接已断开，请刷新页面重试', 'error');
     }
   }
-ws.value.onopen = () => { retryCount.value = 0; ... }
 
   ws.value.onerror = (event) => {
     console.error('WebSocket error:', event)
@@ -228,7 +233,7 @@ ws.value.onopen = () => { retryCount.value = 0; ... }
   }
 }
 
-// --- Session Management (保留原逻辑) ---
+// --- Session Management ---
 const loadSessions = async () => {
   try {
     const response = await fetch('http://localhost:8000/sessions/')
@@ -244,13 +249,13 @@ const loadSession = async (selectedSessionId: string) => {
   try {
     const session = await getSession(selectedSessionId)
     sessionId.value = selectedSessionId
+    // 【关键修复】映射数据时，确保赋值给 media_url
     messages.value = session.messages.map((msg: any) => ({
         ...msg,
-        mediaUrl: msg.media_url || msg.mediaUrl 
+        media_url: msg.media_url || msg.mediaUrl 
     }))
     saveSessionId(selectedSessionId)
     await connectWebSocket()
-    // 切换会话后，如果是移动端，自动收起侧边栏
     if (!mdAndUp.value) drawer.value = false
     setTimeout(scrollToBottom, 100)
   } catch (error) {
@@ -272,7 +277,6 @@ const createNewSession = async () => {
     saveSessionId(session.id)
     await connectWebSocket()
     await loadSessions()
-    // 移动端自动收起侧边栏
     if (!mdAndUp.value) drawer.value = false
   } catch (error) {
     console.error('Failed to create new session:', error)
@@ -298,13 +302,9 @@ const deleteSessionById = async (sessionToDelete: string) => {
       messages.value = []
       clearSessionId()
     }
-
-    // 后端暂时未实现删除接口的提示
-    showMessage('后端暂未实现删除接口，仅演示前端交互', 'warning')
     
-    // 待后端实现后解开：
-    // await deleteSession(sessionToDelete) 
-    // await loadSessions()
+    // 提示用户：后端接口暂未实现，这里仅做前端状态清理演示
+    showMessage('后端暂未实现删除接口，仅演示前端交互', 'warning')
   } catch (error) {
     console.error('Failed to delete session:', error)
     showMessage('删除会话失败', 'error')
@@ -317,7 +317,7 @@ const handleSessionChange = async (newSessionId: string) => {
   }
 }
 
-// --- Message Sending (保留原逻辑) ---
+// --- Message Sending ---
 const sendMessage = (text: string, type: 'text' | 'image' | 'audio' = 'text', url?: string, dialect?: string) => {
   if (!ws.value || ws.value.readyState !== WebSocket.OPEN) {
     showMessage('连接已断开，正在重连...', 'warning')
@@ -329,7 +329,8 @@ const sendMessage = (text: string, type: 'text' | 'image' | 'audio' = 'text', ur
     role: 'user',
     content: text || (type === 'image' ? '发送了一张图片' : '发送了一条语音'),
     type: type,
-    mediaUrl: url,
+    // 【关键修复】使用 media_url 匹配接口
+    media_url: url, 
     created_at: new Date().toISOString()
   }
 
@@ -338,6 +339,7 @@ const sendMessage = (text: string, type: 'text' | 'image' | 'audio' = 'text', ur
     scrollToBottom()
     loading.value = true
 
+    // 发送给后端的 JSON 字段名不需要变，后端解析的是 url 字段
     ws.value.send(JSON.stringify({
       content: text,
       type: type,

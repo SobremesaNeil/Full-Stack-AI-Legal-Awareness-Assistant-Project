@@ -5,6 +5,7 @@ export interface Message {
   media_url?: string
   citations?: string // RAG 引用
   messageId?: number // 用于反馈
+  created_at?: string // <--- 新增这一行，解决报错
 }
 
 export interface Session {

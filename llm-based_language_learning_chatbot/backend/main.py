@@ -6,13 +6,12 @@ import logging
 from contextlib import asynccontextmanager
 from typing import List
 
-from fastapi import FastAPI, Depends, HTTPException, WebSocket, WebSocketDisconnect, UploadFile, File, Form, APIRouter
+from fastapi import FastAPI, Depends, HTTPException, WebSocket, WebSocketDisconnect, UploadFile, File, Form, APIRouter, Request
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
-from fastapi import Request
 
 # 本地模块导入
 import models
@@ -32,16 +31,13 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     # 1. 数据库初始化
     async with engine.begin() as conn:
-        # 生产环境建议使用 Alembic 迁移，而非直接 create_all
         await conn.run_sync(models.Base.metadata.create_all)
     
     # 2. 初始化 RAG 知识库
     init_knowledge_base()
     
     async with AsyncSession(engine) as db:
-        # 3. 初始化默认管理员
         await init_admin_user(db)
-        # 4. 加载规则库到内存
         await init_rules(db)
         
     logger.info("系统启动完成")
@@ -52,7 +48,6 @@ async def init_admin_user(db: AsyncSession):
     """初始化管理员账户"""
     res = await db.execute(select(models.User).filter(models.User.username == "admin"))
     if not res.scalars().first():
-        # 建议：从环境变量获取默认密码，避免硬编码
         default_pwd = os.getenv("ADMIN_DEFAULT_PASSWORD", "admin123")
         hp = auth_utils.get_password_hash(default_pwd)
         db.add(models.User(username="admin", hashed_password=hp, role="admin"))
@@ -62,7 +57,6 @@ async def init_admin_user(db: AsyncSession):
 async def init_rules(db: AsyncSession):
     """加载并初始化规则"""
     await rule_service.load_rules_from_db(db)
-    # 如果规则库为空，注入演示规则
     rule_check = await db.execute(select(models.Rule))
     if not rule_check.scalars().first():
         demo_rule = models.Rule(
@@ -78,7 +72,6 @@ async def init_rules(db: AsyncSession):
 # --- App 初始化 ---
 app = FastAPI(title="AI Legal Assistant", lifespan=lifespan)
 
-# CORS 配置
 app.add_middleware(
     CORSMiddleware, 
     allow_origins=["*"], 
@@ -87,7 +80,6 @@ app.add_middleware(
     allow_headers=["*"]
 )
 
-# 静态文件挂载
 os.makedirs("static/uploads", exist_ok=True)
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
@@ -111,7 +103,7 @@ async def get_current_admin(user: models.User = Depends(get_current_user)):
     return user
 
 # ============================
-# API 路由分组 (使用 APIRouter 整理逻辑)
+# API 路由分组
 # ============================
 
 # 1. 认证模块
@@ -151,7 +143,7 @@ async def get_rules(admin: models.User = Depends(get_current_admin), db: AsyncSe
         try:
             r.patterns = json.loads(r.patterns) 
         except:
-            r.patterns = [] # 容错处理
+            r.patterns = [] 
     return rules
 
 @admin_router.post("/rules", response_model=schemas.Rule)
@@ -165,10 +157,7 @@ async def create_rule(rule: schemas.RuleCreate, admin: models.User = Depends(get
     db.add(db_rule)
     await db.commit()
     await db.refresh(db_rule)
-    
-    # 触发规则引擎热更新
     await rule_service.load_rules_from_db(db)
-    
     db_rule.patterns = json.loads(db_rule.patterns)
     return db_rule
 
@@ -178,7 +167,6 @@ async def delete_rule(rule_id: int, admin: models.User = Depends(get_current_adm
     rule = result.scalars().first()
     if not rule:
         raise HTTPException(404, "规则不存在")
-    
     await db.delete(rule)
     await db.commit()
     await rule_service.load_rules_from_db(db)
@@ -202,7 +190,6 @@ async def get_session(session_id: str, db: AsyncSession = Depends(get_db)):
     session = result.scalars().first()
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
-    
     msg_result = await db.execute(
         select(models.Message)
         .filter(models.Message.session_id == session_id)
@@ -221,9 +208,8 @@ async def submit_feedback(feedback: schemas.FeedbackCreate, db: AsyncSession = D
     await db.commit()
     return {"status": "success"}
 
-# 4. 工单系统与文件上传 (Mixed)
+# 4. 工单系统与文件上传
 misc_router = APIRouter(tags=["Misc"])
-
 
 @misc_router.post("/upload/")
 async def upload_file(request: Request, file: UploadFile = File(...)):
@@ -244,8 +230,9 @@ async def upload_file(request: Request, file: UploadFile = File(...)):
         logger.error(f"文件上传失败: {e}")
         raise HTTPException(500, "文件保存失败")
      
-     base_url = str(request.base_url).rstrip("/")
-    return {"url": f"{base_url}/{file_path}", ...}
+    # 修复：获取完整的 Base URL，防止 localhost 硬编码
+    base_url = str(request.base_url).rstrip("/")
+    return {"url": f"{base_url}/{file_path}", "filename": new_filename}
 
 @misc_router.post("/tickets/", response_model=schemas.Ticket)
 async def create_ticket(ticket: schemas.TicketCreate, user: models.User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
@@ -281,41 +268,29 @@ async def reply_ticket(ticket_id: int, update: schemas.TicketUpdate, admin: mode
 
 @misc_router.post("/tts/")
 async def tts_endpoint(text: str = Form(...), dialect: str = Form(...)):
-    # 简化的 Voice Map
     v_map = {
         "cantonese": "zh-HK-HiuGaaiNeural", 
         "sichuan": "zh-CN-Sichuan-YunxiNeural", 
         "mandarin": "zh-CN-XiaoxiaoNeural"
     }
-    # 注意：这里调用的是 ai_service 里的函数
     url = await synthesize_dialect_audio(text, v_map.get(dialect, "zh-CN-XiaoxiaoNeural"))
     if not url: 
         raise HTTPException(500, "TTS 生成失败")
     return {"audio_url": url}
 
-# --- 核心修复：WebSocket Endpoint ---
-# 说明：这是原代码中被定义了两次的部分，现已合并并增强错误处理
 @app.websocket("/ws/{session_id}")
 async def websocket_endpoint(websocket: WebSocket, session_id: str, db: AsyncSession = Depends(get_db)):
     await websocket.accept()
     logger.info(f"WebSocket connected: {session_id}")
     try:
         while True:
-            # 1. 接收消息
             data = await websocket.receive_text()
-            
-            # 2. 健壮的 JSON 解析
             try:
                 user_input = json.loads(data)
             except json.JSONDecodeError:
-                await websocket.send_json({
-                    "role": "system", 
-                    "content": "错误：消息格式必须为 JSON", 
-                    "type": "error"
-                })
+                await websocket.send_json({"role": "system", "content": "错误：消息格式必须为 JSON", "type": "error"})
                 continue
 
-            # 3. 存储用户消息
             user_msg = models.Message(
                 session_id=session_id, 
                 role="user", 
@@ -326,7 +301,6 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str, db: AsyncSes
             db.add(user_msg)
             await db.commit()
 
-            # 4. 获取历史上下文
             hist_res = await db.execute(
                 select(models.Message)
                 .filter(models.Message.session_id == session_id)
@@ -334,20 +308,12 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str, db: AsyncSes
             )
             history = hist_res.scalars().all()
 
-            # 5. 调用 AI 服务 (包含规则检查和RAG)
-            # 注意：ai_service 内部如果是同步或长时间任务，建议使用 run_in_threadpool，但在 async 函数中直接 await 也可以
             try:
                 ai_res = await get_legal_response(history, user_input)
             except Exception as e:
                 logger.error(f"AI Service Error: {e}")
-                ai_res = {
-                    "content": "系统繁忙，请稍后再试。",
-                    "message_type": "text",
-                    "media_url": None,
-                    "citations": None
-                }
+                ai_res = {"content": "系统繁忙，请稍后再试。", "message_type": "text", "media_url": None}
 
-            # 6. 存储 AI 回复
             ai_msg = models.Message(
                 session_id=session_id, 
                 role="assistant", 
@@ -359,7 +325,6 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str, db: AsyncSes
             db.add(ai_msg)
             await db.commit()
 
-            # 7. 推送给前端
             await websocket.send_json({
                 "role": "assistant", 
                 "content": ai_res["content"], 
@@ -378,7 +343,6 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str, db: AsyncSes
         except:
             pass
 
-# 注册所有路由
 app.include_router(auth_router)
 app.include_router(admin_router)
 app.include_router(chat_router)
