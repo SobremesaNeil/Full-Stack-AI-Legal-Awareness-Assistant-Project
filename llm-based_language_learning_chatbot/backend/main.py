@@ -18,7 +18,7 @@ import models
 import schemas
 import auth_utils
 import rule_service
-from database import engine, get_db
+from database import engine, get_db, AsyncSessionLocal
 from ai_service import get_legal_response, synthesize_dialect_audio
 from rag_service import init_knowledge_base
 
@@ -36,7 +36,8 @@ async def lifespan(app: FastAPI):
     # 2. 初始化 RAG 知识库
     init_knowledge_base()
     
-    async with AsyncSession(engine) as db:
+    # 3. 初始化默认管理员和种子规则 (修复点：使用 AsyncSessionLocal)
+    async with AsyncSessionLocal() as db:
         await init_admin_user(db)
         await init_rules(db)
         
@@ -55,9 +56,9 @@ async def init_admin_user(db: AsyncSession):
         logger.info("👤 管理员已创建 (admin)")
 
 async def init_rules(db: AsyncSession):
+    """初始化规则"""
     rule_check = await db.execute(select(models.Rule))
     if not rule_check.scalars().first():
-        # 【优化】从 rule_service 获取初始化的默认规则写入数据库
         seed_rules = rule_service.get_default_seed_rules()
         for patterns, answer, source in seed_rules:
             db.add(models.Rule(
@@ -232,7 +233,6 @@ async def upload_file(request: Request, file: UploadFile = File(...)):
         logger.error(f"文件上传失败: {e}")
         raise HTTPException(500, "文件保存失败")
      
-    # 修复：获取完整的 Base URL，防止 localhost 硬编码
     base_url = str(request.base_url).rstrip("/")
     return {"url": f"{base_url}/{file_path}", "filename": new_filename}
 
@@ -280,28 +280,6 @@ async def tts_endpoint(text: str = Form(...), dialect: str = Form(...)):
         raise HTTPException(500, "TTS 生成失败")
     return {"audio_url": url}
 
-# ...前面导入部分同原代码...
-from database import engine, get_db, AsyncSessionLocal # 【确保引入 AsyncSessionLocal】
-
-# --- 生命周期管理 ---
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    async with engine.begin() as conn:
-        await conn.run_sync(models.Base.metadata.create_all)
-    
-    init_knowledge_base()
-    
-    # 【修复】：使用 sessionmaker 生成的 AsyncSessionLocal() 而不是 AsyncSession(engine)
-    async with AsyncSessionLocal() as db:
-        await init_admin_user(db)
-        await init_rules(db)
-        
-    logger.info("系统启动完成")
-    yield
-    logger.info("系统正在关闭")
-
-# ... 中间的代码同原文件 ...
-
 @app.websocket("/ws/{session_id}")
 async def websocket_endpoint(websocket: WebSocket, session_id: str):
     await websocket.accept()
@@ -311,13 +289,14 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
             data = await websocket.receive_text()
             try:
                 user_input = json.loads(data)
-                # 【新增防御】：确保传入的是 JSON 字典，防止前端传入数组或普通字符串导致 get() 崩溃
+                # 新增防御：确保传入的是 JSON 字典
                 if not isinstance(user_input, dict):
                     raise ValueError("Payload is not a dictionary")
             except Exception:
                 await websocket.send_json({"role": "system", "content": "错误：消息格式必须为 JSON 对象", "type": "error"})
                 continue
             
+            # 作用域内临时申请 DB Session
             async with AsyncSessionLocal() as db:
                 user_msg = models.Message(
                     session_id=session_id, 
@@ -353,6 +332,7 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                 db.add(ai_msg)
                 await db.commit()
 
+            # 发送给前端
             await websocket.send_json({
                 "role": "assistant", 
                 "content": ai_res["content"], 
@@ -370,3 +350,8 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
             await websocket.close(code=1011)
         except:
             pass
+
+app.include_router(auth_router)
+app.include_router(admin_router)
+app.include_router(chat_router)
+app.include_router(misc_router)
