@@ -280,10 +280,30 @@ async def tts_endpoint(text: str = Form(...), dialect: str = Form(...)):
         raise HTTPException(500, "TTS 生成失败")
     return {"audio_url": url}
 
+# ...前面导入部分同原代码...
+from database import engine, get_db, AsyncSessionLocal # 【确保引入 AsyncSessionLocal】
+
+# --- 生命周期管理 ---
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    async with engine.begin() as conn:
+        await conn.run_sync(models.Base.metadata.create_all)
+    
+    init_knowledge_base()
+    
+    # 【修复】：使用 sessionmaker 生成的 AsyncSessionLocal() 而不是 AsyncSession(engine)
+    async with AsyncSessionLocal() as db:
+        await init_admin_user(db)
+        await init_rules(db)
+        
+    logger.info("系统启动完成")
+    yield
+    logger.info("系统正在关闭")
+
+# ... 中间的代码同原文件 ...
+
 @app.websocket("/ws/{session_id}")
 async def websocket_endpoint(websocket: WebSocket, session_id: str):
-    # 【修复重点】：移除了 Depends(get_db)。
-    # 不能在长连接参数上依赖 DB Session，否则会导致该连接一直霸占 DB 资源直至断开。
     await websocket.accept()
     logger.info(f"WebSocket connected: {session_id}")
     try:
@@ -291,17 +311,19 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
             data = await websocket.receive_text()
             try:
                 user_input = json.loads(data)
-            except json.JSONDecodeError:
-                await websocket.send_json({"role": "system", "content": "错误：消息格式必须为 JSON", "type": "error"})
+                # 【新增防御】：确保传入的是 JSON 字典，防止前端传入数组或普通字符串导致 get() 崩溃
+                if not isinstance(user_input, dict):
+                    raise ValueError("Payload is not a dictionary")
+            except Exception:
+                await websocket.send_json({"role": "system", "content": "错误：消息格式必须为 JSON 对象", "type": "error"})
                 continue
             
-            # 【核心架构优化】：在处理单条消息的作用域内，临时申请 DB Session 并自动释放
             async with AsyncSessionLocal() as db:
                 user_msg = models.Message(
                     session_id=session_id, 
                     role="user", 
-                    content=user_input.get("content"), 
-                    message_type=user_input.get("type"), 
+                    content=user_input.get("content", ""), 
+                    message_type=user_input.get("type", "text"), 
                     media_url=user_input.get("url")
                 )
                 db.add(user_msg)
@@ -331,7 +353,6 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                 db.add(ai_msg)
                 await db.commit()
 
-            # 发送给前端
             await websocket.send_json({
                 "role": "assistant", 
                 "content": ai_res["content"], 
@@ -349,8 +370,3 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
             await websocket.close(code=1011)
         except:
             pass
-
-app.include_router(auth_router)
-app.include_router(admin_router)
-app.include_router(chat_router)
-app.include_router(misc_router)

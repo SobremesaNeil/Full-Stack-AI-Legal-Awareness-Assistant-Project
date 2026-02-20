@@ -3,8 +3,9 @@ import json
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 import models
+
 # ==========================================
-# 1. 定义高频规则库 (原本在 rule_service.py)
+# 1. 内存中的规则缓存
 # ==========================================
 _RULES_CACHE = []
 
@@ -44,88 +45,45 @@ async def load_rules_from_db(db: AsyncSession):
         
     except Exception as e:
         print(f"❌ 数据库连接失败: {e}")
-        
-LEGAL_RULES = [
-    (
-        [r"借款.*诉讼时效", r"欠钱.*多久.*起诉"], 
-        "根据《民法典》第一百八十八条，向人民法院请求保护民事权利的诉讼时效期间为三年。诉讼时效期间自权利人知道或者应当知道权利受到损害以及义务人之日起计算。",
-        "《民法典》第一百八十八条"
-    ),
-    (
-        [r"利息.*上限", r"高利贷.*标准", r"年利率.*多少"],
-        "根据最高人民法院规定，借贷双方约定的利率未超过合同成立时一年期贷款市场报价利率（LPR）四倍的，人民法院应予支持。超过部分不予保护。",
-        "最高法《关于审理民间借贷案件适用法律若干问题的规定》"
-    ),
-    (
-        [r"客服.*电话", r"联系.*管理员", r"人工.*服务"],
-        "我们的法律援助热线是：400-888-8888。工作时间：周一至周五 9:00-18:00。",
-        "平台服务指南"
-    ),
-    (
-        [r"杀人.*判几年", r"故意杀人.*刑期"],
-        "根据《刑法》第二百三十二条，故意杀人的，处死刑、无期徒刑或者十年以上有期徒刑；情节较轻的，处三年以上十年以下有期徒刑。",
-        "《刑法》第二百三十二条"
-    )
-]
 
 # ==========================================
-# 2. 知识库初始化逻辑 (原本在 rag_service.py)
+# 2. 种子规则（供数据库首次初始化使用）
 # ==========================================
-
-def add_legal_document(content, source):
-    """
-    假设这是你原有的入库函数，用于将文本向量化并存入数据库
-    """
-    # 示例伪代码：collection.add(documents=[content], metadatas=[{"source": source}])
-    print(f"成功入库 -> 来源: {source} | 内容摘要: {content[:20]}...")
-
-def init_knowledge_base():
-    """
-    修改后的 init 部分：
-    在初始化向量库时，循环将 LEGAL_RULES 里的内容也存进去
-    """
-    # 模拟检查数据库是否为空，防止重复导入
-    # if collection.count() == 0: 
-    
-    print("开始初始化法律知识库...")
-    
-    # --- 原有的法律条文导入逻辑 (此处省略具体实现) ---
-    # import_existing_laws() 
-
-    # --- 新增：把规则库也变成 AI 的知识 ---
-    # 这样即使正则引擎没匹配到（比如用户问法很怪），AI 检索 RAG 也能搜到这些标准答案
-    for patterns, answer, source in LEGAL_RULES:
-        # 组合成一段语义完整的文本存入向量库
-        # 我们取 patterns[0] 作为典型问题描述，配合标准答案
-        content = f"问题关键词：{patterns[0]}。标准答案：{answer}"
-        
-        # 调用入库函数，标记来源为“规则库”
-        add_legal_document(content, f"规则库-{source}")
-
-    print("法律知识库 + 规则库 初始化完成！")
+def get_default_seed_rules():
+    """提供系统首次启动时的初始数据"""
+    return [
+        (
+            [r"借款.*诉讼时效", r"欠钱.*多久.*起诉"], 
+            "根据《民法典》第一百八十八条，向人民法院请求保护民事权利的诉讼时效期间为三年。诉讼时效期间自权利人知道或者应当知道权利受到损害以及义务人之日起计算。",
+            "《民法典》第一百八十八条"
+        ),
+        (
+            [r"利息.*上限", r"高利贷.*标准", r"年利率.*多少"],
+            "根据最高人民法院规定，借贷双方约定的利率未超过合同成立时一年期贷款市场报价利率（LPR）四倍的，人民法院应予支持。超过部分不予保护。",
+            "最高法《关于审理民间借贷案件适用法律若干问题的规定》"
+        ),
+        (
+            [r"客服.*电话", r"联系.*管理员", r"人工.*服务"],
+            "我们的法律援助热线是：400-888-8888。工作时间：周一至周五 9:00-18:00。",
+            "平台服务指南"
+        ),
+        (
+            [r"杀人.*判几年", r"故意杀人.*刑期"],
+            "根据《刑法》第二百三十二条，故意杀人的，处死刑、无期徒刑或者十年以上有期徒刑；情节较轻的，处三年以上十年以下有期徒刑。",
+            "《刑法》第二百三十二条"
+        )
+    ]
 
 # ==========================================
-# 3. 规则匹配引擎 (原本的 check_rules)
+# 3. 规则匹配引擎
 # ==========================================
-
 def check_rules(user_query: str):
     """
-    规则匹配引擎：返回 (matched_content, source) 或 (None, None)
+    规则匹配引擎：直接使用从数据库加载到内存的 _RULES_CACHE，实现毫秒级响应。
     """
-    for patterns, answer, source in LEGAL_RULES:
-        for pattern in patterns:
-            # 使用 regex 进行模糊匹配，IGNORECASE 忽略大小写
-            if re.search(pattern, user_query, re.IGNORECASE):
-                return answer, source
+    global _RULES_CACHE
+    for rule in _RULES_CACHE:
+        for pattern in rule["patterns"]:
+            if pattern.search(user_query):
+                return rule["answer"], rule["source"]
     return None, None
-
-# --- 测试运行 ---
-if __name__ == "__main__":
-    # 执行初始化（将规则存入向量库）
-    init_knowledge_base()
-    
-    # 测试正则匹配
-    test_query = "请问欠钱不还多久可以起诉？"
-    ans, src = check_rules(test_query)
-    if ans:
-        print(f"\n[匹配成功] 来源：{src}\n回答：{ans}")
