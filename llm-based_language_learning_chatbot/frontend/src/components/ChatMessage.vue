@@ -16,11 +16,19 @@
       <div v-if="documentData" class="document-container mt-2">
         <div class="document-header d-flex justify-space-between align-center">
           <div><v-icon size="small" class="mr-1">mdi-file-document-outline</v-icon> {{ documentTitle }}</div>
-          <v-btn size="x-small" color="primary" variant="flat" @click="downloadDocument">
-            <v-icon size="small" class="mr-1">mdi-download</v-icon> 下载文书
+          <v-btn 
+            size="x-small" 
+            color="primary" 
+            variant="flat" 
+            :loading="isDownloading"
+            @click="downloadPdfDocument"
+          >
+            <v-icon size="small" class="mr-1">mdi-download</v-icon> 导出 PDF
           </v-btn>
         </div>
-        <div class="document-body custom-scrollbar" v-html="parsedDocument"></div>
+        <div class="document-body custom-scrollbar">
+          <div ref="documentRef" class="pdf-render-target" v-html="parsedDocument"></div>
+        </div>
       </div>
       
       <img v-if="message.media_url" :src="message.media_url" class="media-img" />
@@ -46,10 +54,17 @@ import type { Message } from '@/types/chat'
 // 引入 mindmap
 import { Transformer } from 'markmap-lib'
 import { Markmap } from 'markmap-view'
+// 引入 PDF 生成依赖
+import html2canvas from 'html2canvas'
+import { jsPDF } from 'jspdf'
 
 const props = defineProps<{ message: Message }>()
 const feedbackStatus = ref(0)
 const mindmapSvg = ref<SVGElement | null>(null)
+
+// 用于 PDF 导出的 DOM 引用和状态
+const documentRef = ref<HTMLElement | null>(null)
+const isDownloading = ref(false)
 
 // --- 数据解析提取 ---
 const extractTagContent = (text: string, tag: string) => {
@@ -98,16 +113,60 @@ const renderMindmap = async () => {
 watch(mindmapData, renderMindmap)
 onMounted(renderMindmap)
 
-// --- 文书下载 ---
-const downloadDocument = () => {
-  if (!documentData.value) return
-  const blob = new Blob([documentData.value], { type: 'text/markdown;charset=utf-8' })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = `${documentTitle.value}.md`
-  a.click()
-  URL.revokeObjectURL(url)
+// --- 高级 PDF 导出功能 (自动分页 + 高清渲染) ---
+const downloadPdfDocument = async () => {
+  if (!documentRef.value) return
+  isDownloading.value = true
+  
+  try {
+    const element = documentRef.value
+    
+    // 1. 使用 html2canvas 将 DOM 渲染为高清图片 (scale 设为 2 保证清晰度)
+    const canvas = await html2canvas(element, {
+      scale: 2,
+      useCORS: true,
+      backgroundColor: '#ffffff', // 强制纯白背景，符合公文规范
+      windowWidth: element.scrollWidth,
+      windowHeight: element.scrollHeight
+    })
+
+    const imgData = canvas.toDataURL('image/jpeg', 1.0)
+    
+    // 2. 初始化 jsPDF，设置为 A4 纸张 (纵向, 毫米)
+    const pdf = new jsPDF('p', 'mm', 'a4')
+    const pdfWidth = pdf.internal.pageSize.getWidth()
+    const pdfHeight = pdf.internal.pageSize.getHeight()
+    
+    // 3. 计算边距与尺寸 (模拟真实 A4 打印边距：左右 15mm)
+    const margin = 15
+    const contentWidth = pdfWidth - margin * 2
+    const contentHeight = (canvas.height * contentWidth) / canvas.width
+    
+    // 4. 处理长文书智能分页逻辑
+    let position = 0 // Y轴偏移量
+    let heightLeft = contentHeight // 剩余未绘制的高度
+
+    // 绘制第一页
+    pdf.addImage(imgData, 'JPEG', margin, position + margin, contentWidth, contentHeight)
+    heightLeft -= (pdfHeight - margin * 2)
+
+    // 循环分页：如果高度还有剩余，新增一页并把图片往上偏移
+    while (heightLeft > 0) {
+      position -= (pdfHeight - margin * 2) 
+      pdf.addPage()
+      pdf.addImage(imgData, 'JPEG', margin, position + margin, contentWidth, contentHeight)
+      heightLeft -= (pdfHeight - margin * 2)
+    }
+
+    // 5. 触发下载
+    pdf.save(`${documentTitle.value || '法律援助文书'}.pdf`)
+    
+  } catch (error) {
+    console.error('PDF 导出失败:', error)
+    alert('PDF 导出失败，请重试')
+  } finally {
+    isDownloading.value = false
+  }
 }
 
 async function sendFeedback(score: number) {
@@ -147,7 +206,28 @@ async function sendFeedback(score: number) {
 /* 法律文书区块 */
 .document-container { border: 1px solid #bbdefb; border-radius: 8px; background: #fff; overflow: hidden; }
 .document-header { background: #e3f2fd; padding: 8px 12px; font-weight: bold; color: #1565c0; border-bottom: 1px solid #bbdefb; }
-.document-body { padding: 16px; font-family: 'Courier New', Courier, monospace; font-size: 0.9rem; background: #fcfcfc; max-height: 300px; overflow-y: auto; line-height: 1.6; }
+.document-body { max-height: 350px; overflow-y: auto; background: #fcfcfc; }
+
+/* PDF 渲染靶点样式：保证导出时像标准的 A4 公文 */
+.pdf-render-target {
+  padding: 24px 32px;
+  font-family: 'SimSun', 'Songti SC', 'Times New Roman', serif; /* 法律文书常用宋体类 */
+  font-size: 16px;
+  line-height: 2;
+  color: #000;
+  background-color: #ffffff; /* 必须显式写白底，防止截图变黑 */
+}
+.pdf-render-target :deep(h1), 
+.pdf-render-target :deep(h2), 
+.pdf-render-target :deep(h3) {
+  text-align: center;
+  margin-bottom: 16px;
+  color: #000;
+}
+.pdf-render-target :deep(p) {
+  text-indent: 2em; /* 首行缩进，更具公文仪式感 */
+  margin-bottom: 12px;
+}
 
 /* 反馈按钮 */
 .feedback-actions { display: flex; gap: 12px; margin-top: 4px; padding-left: 4px; }

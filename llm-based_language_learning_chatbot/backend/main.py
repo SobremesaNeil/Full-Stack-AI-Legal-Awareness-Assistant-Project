@@ -55,19 +55,21 @@ async def init_admin_user(db: AsyncSession):
         logger.info("👤 管理员已创建 (admin)")
 
 async def init_rules(db: AsyncSession):
-    """加载并初始化规则"""
-    await rule_service.load_rules_from_db(db)
     rule_check = await db.execute(select(models.Rule))
     if not rule_check.scalars().first():
-        demo_rule = models.Rule(
-            patterns=json.dumps([r"客服.*电话", r"联系.*谁"]),
-            answer="我们的法律援助热线是 400-1234-5678。",
-            source="平台服务手册"
-        )
-        db.add(demo_rule)
+        # 【优化】从 rule_service 获取初始化的默认规则写入数据库
+        seed_rules = rule_service.get_default_seed_rules()
+        for patterns, answer, source in seed_rules:
+            db.add(models.Rule(
+                patterns=json.dumps(patterns, ensure_ascii=False),
+                answer=answer,
+                source=source
+            ))
         await db.commit()
-        await rule_service.load_rules_from_db(db)
-        logger.info("注入了默认演示规则")
+        logger.info("注入了默认种子规则")
+    
+    # 初始化完成后，统一加载到内存缓存中
+    await rule_service.load_rules_from_db(db)
 
 # --- App 初始化 ---
 app = FastAPI(title="AI Legal Assistant", lifespan=lifespan)
@@ -279,7 +281,9 @@ async def tts_endpoint(text: str = Form(...), dialect: str = Form(...)):
     return {"audio_url": url}
 
 @app.websocket("/ws/{session_id}")
-async def websocket_endpoint(websocket: WebSocket, session_id: str, db: AsyncSession = Depends(get_db)):
+async def websocket_endpoint(websocket: WebSocket, session_id: str):
+    # 【修复重点】：移除了 Depends(get_db)。
+    # 不能在长连接参数上依赖 DB Session，否则会导致该连接一直霸占 DB 资源直至断开。
     await websocket.accept()
     logger.info(f"WebSocket connected: {session_id}")
     try:
@@ -290,41 +294,44 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str, db: AsyncSes
             except json.JSONDecodeError:
                 await websocket.send_json({"role": "system", "content": "错误：消息格式必须为 JSON", "type": "error"})
                 continue
+            
+            # 【核心架构优化】：在处理单条消息的作用域内，临时申请 DB Session 并自动释放
+            async with AsyncSessionLocal() as db:
+                user_msg = models.Message(
+                    session_id=session_id, 
+                    role="user", 
+                    content=user_input.get("content"), 
+                    message_type=user_input.get("type"), 
+                    media_url=user_input.get("url")
+                )
+                db.add(user_msg)
+                await db.commit()
 
-            user_msg = models.Message(
-                session_id=session_id, 
-                role="user", 
-                content=user_input.get("content"), 
-                message_type=user_input.get("type"), 
-                media_url=user_input.get("url")
-            )
-            db.add(user_msg)
-            await db.commit()
+                hist_res = await db.execute(
+                    select(models.Message)
+                    .filter(models.Message.session_id == session_id)
+                    .order_by(models.Message.created_at)
+                )
+                history = hist_res.scalars().all()
 
-            hist_res = await db.execute(
-                select(models.Message)
-                .filter(models.Message.session_id == session_id)
-                .order_by(models.Message.created_at)
-            )
-            history = hist_res.scalars().all()
+                try:
+                    ai_res = await get_legal_response(history, user_input)
+                except Exception as e:
+                    logger.error(f"AI Service Error: {e}")
+                    ai_res = {"content": "系统繁忙，请稍后再试。", "message_type": "text", "media_url": None}
 
-            try:
-                ai_res = await get_legal_response(history, user_input)
-            except Exception as e:
-                logger.error(f"AI Service Error: {e}")
-                ai_res = {"content": "系统繁忙，请稍后再试。", "message_type": "text", "media_url": None}
+                ai_msg = models.Message(
+                    session_id=session_id, 
+                    role="assistant", 
+                    content=ai_res["content"], 
+                    message_type=ai_res["message_type"], 
+                    media_url=ai_res["media_url"], 
+                    citations=ai_res.get("citations")
+                )
+                db.add(ai_msg)
+                await db.commit()
 
-            ai_msg = models.Message(
-                session_id=session_id, 
-                role="assistant", 
-                content=ai_res["content"], 
-                message_type=ai_res["message_type"], 
-                media_url=ai_res["media_url"], 
-                citations=ai_res.get("citations")
-            )
-            db.add(ai_msg)
-            await db.commit()
-
+            # 发送给前端
             await websocket.send_json({
                 "role": "assistant", 
                 "content": ai_res["content"], 
