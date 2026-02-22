@@ -1,8 +1,12 @@
 import re
 import json
+import logging
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 import models
+
+# Configure logger
+logger = logging.getLogger(__name__)
 
 # ==========================================
 # 1. 内存中的规则缓存
@@ -15,7 +19,7 @@ async def load_rules_from_db(db: AsyncSession):
     此函数应在系统启动时调用，以及管理员修改规则后调用。
     """
     global _RULES_CACHE
-    print("🔄 正在从数据库重新加载高频规则库...")
+    logger.info("🔄 正在从数据库重新加载高频规则库...")
     
     try:
         result = await db.execute(select(models.Rule).filter(models.Rule.active == True))
@@ -38,13 +42,13 @@ async def load_rules_from_db(db: AsyncSession):
                     "source": r.source
                 })
             except Exception as e:
-                print(f"❌ 规则 ID {r.id} 加载失败: {e}")
+                logger.warning(f"❌ 规则 ID {r.id} 加载失败: {e}")
                 
         _RULES_CACHE = new_cache
-        print(f"✅ 规则库加载完成，当前生效规则数: {len(_RULES_CACHE)}")
+        logger.info(f"✅ 规则库加载完成，当前生效规则数: {len(_RULES_CACHE)}")
         
     except Exception as e:
-        print(f"❌ 数据库连接失败: {e}")
+        logger.error(f"❌ 数据库连接失败: {e}")
 
 # ==========================================
 # 2. 种子规则（供数据库首次初始化使用）

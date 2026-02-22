@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from datetime import datetime
 from typing import Optional, List, Any
 
@@ -10,6 +10,30 @@ class Token(BaseModel):
 class UserCreate(BaseModel):
     username: str
     password: str
+
+    @field_validator('username')
+    @classmethod
+    def validate_username(cls, v):
+        if len(v) < 3:
+            raise ValueError('Username must be at least 3 characters')
+        if len(v) > 50:
+            raise ValueError('Username must not exceed 50 characters')
+        return v
+
+    @field_validator('password')
+    @classmethod
+    def validate_password(cls, v):
+        if len(v) < 8:
+            raise ValueError('Password must be at least 8 characters')
+        if len(v) > 128:
+            raise ValueError('Password must not exceed 128 characters')
+        # Check for at least one uppercase, one lowercase, one digit
+        has_upper = any(c.isupper() for c in v)
+        has_lower = any(c.islower() for c in v)
+        has_digit = any(c.isdigit() for c in v)
+        if not (has_upper and has_lower and has_digit):
+            raise ValueError('Password must contain uppercase, lowercase, and digit')
+        return v
 
 class UserLogin(BaseModel):
     username: str

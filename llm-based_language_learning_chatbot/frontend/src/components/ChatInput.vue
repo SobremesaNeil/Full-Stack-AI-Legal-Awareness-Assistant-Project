@@ -68,6 +68,7 @@
 
 <script setup lang="ts">
 import { ref } from 'vue'
+import { uploadFile } from '@/services/api'
 
 const props = defineProps<{ loading: boolean }>()
 const emit = defineEmits(['send'])
@@ -83,14 +84,9 @@ const triggerFileInput = () => fileInput.value?.click()
 const handleFileChange = async (event: Event) => {
   const file = (event.target as HTMLInputElement).files?.[0]
   if (!file) return
-  
-  // 这里应该调用 API 上传图片换取 URL，为了简化先用 POST /upload/
-  const formData = new FormData()
-  formData.append('file', file)
-  
+
   try {
-    const res = await fetch('http://localhost:8000/upload/', { method: 'POST', body: formData })
-    const data = await res.json()
+    const data = await uploadFile(file)
     previewUrl.value = data.url // 拿到后端返回的 URL
   } catch (e) {
     console.error('Upload failed', e)

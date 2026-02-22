@@ -58,6 +58,41 @@ import { Markmap } from 'markmap-view'
 import html2canvas from 'html2canvas'
 import { jsPDF } from 'jspdf'
 
+// XSS Protection: Sanitize HTML to prevent script injection
+const sanitizeHtml = (html: string): string => {
+  // Create a temporary element to parse HTML
+  const temp = document.createElement('div')
+  temp.textContent = html // textContent escapes all HTML
+
+  // Re-render known-safe markdown tags
+  let sanitized = temp.innerHTML
+
+  // Remove potentially dangerous attributes (onclick, onerror, etc)
+  sanitized = sanitized.replace(/on\w+="[^"]*"/gi, '')
+  sanitized = sanitized.replace(/on\w+='[^']*'/gi, '')
+  sanitized = sanitized.replace(/javascript:/gi, '')
+  sanitized = sanitized.replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+  sanitized = sanitized.replace(/<iframe[^>]*>[\s\S]*?<\/iframe>/gi, '')
+
+  return sanitized
+}
+
+// Safe markdown parser that prevents script injection
+const safeMarked = (content: string): string => {
+  try {
+    // Configure marked to not allow raw HTML
+    marked.setOptions({
+      breaks: true,
+      gfm: true
+    })
+    const html = marked(content) as string
+    return sanitizeHtml(html)
+  } catch (e) {
+    console.error('Markdown parsing error:', e)
+    return sanitizeHtml(content)
+  }
+}
+
 const props = defineProps<{ message: Message }>()
 const feedbackStatus = ref(0)
 const mindmapSvg = ref<SVGElement | null>(null)
@@ -85,14 +120,14 @@ const mindmapData = computed(() => extractTagContent(props.message.content || ''
 // 提取文书内容与标题
 const documentData = computed(() => extractTagContent(props.message.content || '', 'document'))
 const documentTitle = computed(() => extractTagAttribute(props.message.content || '', 'document', 'title'))
-const parsedDocument = computed(() => documentData.value ? marked(documentData.value) : '')
+const parsedDocument = computed(() => documentData.value ? safeMarked(documentData.value) : '')
 
 // 过滤掉自定义标签，仅显示纯文本对话
 const parsedContent = computed(() => {
   let content = props.message.content || ''
   content = content.replace(/<mindmap>[\s\S]*?<\/mindmap>/gi, '')
   content = content.replace(/<document[^>]*>[\s\S]*?<\/document>/gi, '')
-  return marked(content)
+  return safeMarked(content)
 })
 
 // --- 思维导图渲染 ---

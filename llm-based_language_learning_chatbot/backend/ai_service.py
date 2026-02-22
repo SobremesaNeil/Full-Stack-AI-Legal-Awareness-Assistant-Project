@@ -1,14 +1,18 @@
 import os
 import asyncio
 import base64
+import logging
 from openai import AsyncOpenAI
 from fastapi.concurrency import run_in_threadpool
 from rag_service import search_knowledge
 from rule_service import check_rules
 
+# Configure logger
+logger = logging.getLogger(__name__)
+
 client = AsyncOpenAI(
     api_key=os.getenv("OPENAI_API_KEY", "sk-placeholder"),
-    base_url=os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1") 
+    base_url=os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
 )
 
 LAWYER_AGENT_PROMPT = """...（同原代码）..."""
@@ -21,7 +25,7 @@ def encode_image_to_base64(image_path: str) -> str:
         with open(image_path, "rb") as image_file:
             return base64.b64encode(image_file.read()).decode('utf-8')
     except Exception as e:
-        print(f"读取图片失败: {e}")
+        logger.error(f"读取图片失败: {e}")
         return None
 
 async def agent_inference(prompt: str, context: str, user_query: str) -> str:
@@ -36,7 +40,7 @@ async def agent_inference(prompt: str, context: str, user_query: str) -> str:
         )
         return response.choices[0].message.content
     except Exception as e:
-        print(f"Agent Error: {e}")
+        logger.error(f"Agent Error: {e}")
         return ""
 
 async def get_legal_response(history: list, latest_input: dict):
@@ -63,7 +67,7 @@ async def get_legal_response(history: list, latest_input: dict):
                 rag_context = "\n".join(knowledge_docs)
                 citations = knowledge_docs
         except Exception as e:
-            print(f"RAG Error: {e}")
+            logger.error(f"RAG Error: {e}")
 
     is_complex = len(text_content) > 15 or "起诉" in text_content or "怎么办" in text_content or "合同" in text_content
     
@@ -99,7 +103,7 @@ async def get_legal_response(history: list, latest_input: dict):
             )
             ai_text = response.choices[0].message.content
         except Exception as e:
-            print(f"Vision Agent Error: {e}")
+            logger.error(f"Vision Agent Error: {e}")
             ai_text = "图片分析失败，请检查模型配置是否支持视觉处理。"
     
     elif is_complex:

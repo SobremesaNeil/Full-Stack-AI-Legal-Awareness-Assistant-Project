@@ -131,7 +131,7 @@
 <script setup lang="ts">
 import { ref, onMounted, nextTick, onBeforeUnmount } from 'vue'
 import { useDisplay } from 'vuetify'
-import { createSession, getSession, getWebSocketUrl } from '@/services/api'
+import { createSession, getSessions, getSession, getWebSocketUrl } from '@/services/api'
 import { saveSessionId, getSessionId, clearSessionId } from '@/utils/storage'
 import type { Message, Session } from '@/types/chat'
 import ChatMessageComponent from './ChatMessage.vue'
@@ -236,12 +236,11 @@ const connectWebSocket = () => {
 // --- Session Management ---
 const loadSessions = async () => {
   try {
-    const response = await fetch('http://localhost:8000/sessions/')
-    if (!response.ok) throw new Error('Failed to load sessions')
-    const data = await response.json()
+    const data = await getSessions()
     sessions.value = data
   } catch (error) {
     console.error('Failed to load sessions:', error)
+    showMessage('加载会话失表', 'error')
   }
 }
 
@@ -265,7 +264,12 @@ const loadSession = async (selectedSessionId: string) => {
 }
 
 const createNewSession = async () => {
+  // Prevent duplicate session creation
+  if (loading.value) return
+
   try {
+    loading.value = true
+
     if (ws.value) {
       ws.value.close()
     }
@@ -281,6 +285,8 @@ const createNewSession = async () => {
   } catch (error) {
     console.error('Failed to create new session:', error)
     showMessage('创建新会话失败', 'error')
+  } finally {
+    loading.value = false
   }
 }
 
@@ -381,11 +387,15 @@ const showConfirmDialog = (title: string, text: string, type: 'info' | 'warning'
 const handleDialogConfirm = () => {
   dialog.value = false
   dialogPromise.value?.resolve(true)
+  // Cleanup to prevent memory leaks
+  setTimeout(() => { dialogPromise.value = null }, 0)
 }
 
 const handleDialogCancel = () => {
   dialog.value = false
   dialogPromise.value?.resolve(false)
+  // Cleanup to prevent memory leaks
+  setTimeout(() => { dialogPromise.value = null }, 0)
 }
 
 // --- Lifecycle ---

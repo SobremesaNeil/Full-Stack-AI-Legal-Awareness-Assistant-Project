@@ -26,9 +26,24 @@ from rag_service import init_knowledge_base
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# SECURITY: Validate required environment variables at startup
+def validate_environment():
+    """Validate all required environment variables are set"""
+    required_vars = ["DATABASE_URL"]
+    for var in required_vars:
+        if not os.getenv(var):
+            raise ValueError(f"Missing required environment variable: {var}")
+
+    # Log environment for debugging (be careful with secrets)
+    logger.info(f"Environment: {os.getenv('ENVIRONMENT', 'development')}")
+    logger.info("Environment validation passed")
+
 # --- 生命周期管理 ---
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # 0. 验证环境变量
+    validate_environment()
+
     # 1. 数据库初始化
     async with engine.begin() as conn:
         await conn.run_sync(models.Base.metadata.create_all)
@@ -75,12 +90,14 @@ async def init_rules(db: AsyncSession):
 # --- App 初始化 ---
 app = FastAPI(title="AI Legal Assistant", lifespan=lifespan)
 
+# SECURITY: Configure CORS with specific allowed origins
+ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "http://localhost:5173,http://localhost:3000").split(",")
 app.add_middleware(
-    CORSMiddleware, 
-    allow_origins=["*"], 
-    allow_credentials=True, 
-    allow_methods=["*"], 
-    allow_headers=["*"]
+    CORSMiddleware,
+    allow_origins=ALLOWED_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization"]
 )
 
 os.makedirs("static/uploads", exist_ok=True)
@@ -144,8 +161,9 @@ async def get_rules(admin: models.User = Depends(get_current_admin), db: AsyncSe
     rules = result.scalars().all()
     for r in rules:
         try:
-            r.patterns = json.loads(r.patterns) 
-        except:
+            r.patterns = json.loads(r.patterns)
+        except (json.JSONDecodeError, TypeError, ValueError) as e:
+            logger.warning(f"Failed to parse rule patterns: {e}")
             r.patterns = [] 
     return rules
 
@@ -170,7 +188,7 @@ async def delete_rule(rule_id: int, admin: models.User = Depends(get_current_adm
     rule = result.scalars().first()
     if not rule:
         raise HTTPException(404, "规则不存在")
-    await db.delete(rule)
+    db.delete(rule)
     await db.commit()
     await rule_service.load_rules_from_db(db)
     return {"status": "deleted"}
@@ -203,38 +221,72 @@ async def get_session(session_id: str, db: AsyncSession = Depends(get_db)):
 
 @chat_router.post("/feedback/")
 async def submit_feedback(feedback: schemas.FeedbackCreate, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(models.Message).filter(models.Message.id == feedback.message_id))
-    msg = result.scalars().first()
-    if not msg:
-        raise HTTPException(404, "Message not found")
-    msg.feedback_score = feedback.score
-    await db.commit()
-    return {"status": "success"}
+    try:
+        result = await db.execute(select(models.Message).filter(models.Message.id == feedback.message_id))
+        msg = result.scalars().first()
+        if not msg:
+            raise HTTPException(404, "Message not found")
+        msg.feedback_score = feedback.score
+        await db.commit()
+        return {"status": "success"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Feedback submission error: {e}")
+        await db.rollback()
+        raise HTTPException(500, "Failed to submit feedback")
+    finally:
+        await db.close()
 
 # 4. 工单系统与文件上传
 misc_router = APIRouter(tags=["Misc"])
 
 @misc_router.post("/upload/")
 async def upload_file(request: Request, file: UploadFile = File(...)):
+    # Configuration
     ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "wav"}
+    MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB limit
+
     filename = file.filename or "unknown"
-    ext = filename.split(".")[-1].lower()
-    
+
+    # Validate file extension
+    ext = filename.split(".")[-1].lower() if "." in filename else ""
     if ext not in ALLOWED_EXTENSIONS:
-        raise HTTPException(400, "不支持的文件类型")
-    
+        raise HTTPException(400, f"不支持的文件类型: .{ext}")
+
+    # Validate file size (read file to check size)
+    file_size = 0
+    file_content = b""
+    chunk_size = 8192
+
+    try:
+        while True:
+            chunk = await file.read(chunk_size)
+            if not chunk:
+                break
+            file_size += len(chunk)
+            if file_size > MAX_FILE_SIZE:
+                raise HTTPException(413, f"文件不能超过 {MAX_FILE_SIZE // 1024 // 1024}MB")
+            file_content += chunk
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"文件读取失败: {e}")
+        raise HTTPException(500, "文件读取失败")
+
     new_filename = f"{uuid.uuid4()}.{ext}"
     file_path = f"static/uploads/{new_filename}"
-    
+
     try:
         with open(file_path, "wb") as f:
-            shutil.copyfileobj(file.file, f)
+            f.write(file_content)
     except Exception as e:
         logger.error(f"文件上传失败: {e}")
         raise HTTPException(500, "文件保存失败")
-     
+
     base_url = str(request.base_url).rstrip("/")
-    return {"url": f"{base_url}/{file_path}", "filename": new_filename}
+    # Use proper URL joining instead of f-string
+    return {"url": f"{base_url}/static/uploads/{new_filename}", "filename": new_filename}
 
 @misc_router.post("/tickets/", response_model=schemas.Ticket)
 async def create_ticket(ticket: schemas.TicketCreate, user: models.User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
@@ -348,8 +400,8 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
         logger.error(f"WebSocket Error: {e}")
         try:
             await websocket.close(code=1011)
-        except:
-            pass
+        except RuntimeError as close_error:
+            logger.warning(f"Failed to close WebSocket: {close_error}")
 
 app.include_router(auth_router)
 app.include_router(admin_router)

@@ -1,7 +1,11 @@
 import { useAuthStore } from '@/stores/auth'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'
-const WS_BASE_URL = API_BASE_URL.replace(/^http/, 'ws')
+
+// Fix WebSocket protocol: http/https -> ws/wss
+const WS_BASE_URL = API_BASE_URL.replace(/^https?/, (match) => {
+  return match === 'https' ? 'wss' : 'ws'
+})
 
 // 辅助函数：带 Token 的 Fetch
 async function authFetch(url: string, options: RequestInit = {}) {
@@ -53,6 +57,12 @@ export async function registerUser(user: any) {
 // --- Chat & Session ---
 export async function createSession() {
   const response = await fetch(`${API_BASE_URL}/sessions/`, { method: 'POST' })
+  return response.json()
+}
+
+export async function getSessions() {
+  const response = await fetch(`${API_BASE_URL}/sessions/`)
+  if (!response.ok) throw new Error('Failed to load sessions')
   return response.json()
 }
 
@@ -124,5 +134,17 @@ export async function deleteRule(ruleId: number) {
     method: 'DELETE'
   })
   if (!response.ok) throw new Error('删除规则失败')
+  return response.json()
+}
+
+// --- File Upload ---
+export async function uploadFile(file: File) {
+  const formData = new FormData()
+  formData.append('file', file)
+  const response = await fetch(`${API_BASE_URL}/upload/`, {
+    method: 'POST',
+    body: formData
+  })
+  if (!response.ok) throw new Error('文件上传失败')
   return response.json()
 }

@@ -4,9 +4,16 @@ from typing import Optional
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 
-SECRET_KEY = os.getenv("SECRET_KEY", "your-super-secret-key-change-it")
+# SECURITY: Must be provided via environment variable, no default in production
+SECRET_KEY = os.getenv("SECRET_KEY")
+if not SECRET_KEY:
+    # Only use a default fallback in development
+    if os.getenv("ENVIRONMENT") == "production":
+        raise ValueError("SECRET_KEY environment variable must be set in production")
+    SECRET_KEY = "your-super-secret-key-change-it"
+
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 300
+ACCESS_TOKEN_EXPIRE_MINUTES = 30  # Reduced from 300 (5 hours) to 30 minutes for better security
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
