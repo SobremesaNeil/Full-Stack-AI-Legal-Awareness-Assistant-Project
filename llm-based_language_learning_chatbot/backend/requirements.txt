@@ -10,6 +10,7 @@ aiofiles
 azure-cognitiveservices-speech
 httpx
 asyncpg
+aiosqlite
 python-multipart
 chromadb
 passlib[bcrypt]

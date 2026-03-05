@@ -29,13 +29,18 @@ logger = logging.getLogger(__name__)
 # SECURITY: Validate required environment variables at startup
 def validate_environment():
     """Validate all required environment variables are set"""
-    required_vars = ["DATABASE_URL"]
-    for var in required_vars:
-        if not os.getenv(var):
-            raise ValueError(f"Missing required environment variable: {var}")
+    use_mock = os.getenv("USE_MOCK", "false").lower() == "true"
+
+    if not use_mock:
+        required_vars = ["DATABASE_URL"]
+        for var in required_vars:
+            if not os.getenv(var):
+                raise ValueError(f"Missing required environment variable: {var}")
 
     # Log environment for debugging (be careful with secrets)
     logger.info(f"Environment: {os.getenv('ENVIRONMENT', 'development')}")
+    if use_mock:
+        logger.info("Mock 模式已启用：使用 SQLite 数据库，AI 回复为预设模拟数据。")
     logger.info("Environment validation passed")
 
 # --- 生命周期管理 ---
