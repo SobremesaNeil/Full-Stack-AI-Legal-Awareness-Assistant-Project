@@ -1,6 +1,6 @@
-# .
+# AI Legal Assistant – Frontend
 
-This template should help get you started developing with Vue 3 in Vite.
+Vue 3 + Vite + Vuetify frontend for the AI Legal Awareness Assistant.
 
 ## Recommended IDE Setup
 
@@ -25,6 +25,19 @@ npm install
 ```sh
 npm run dev
 ```
+
+### Run in Mock Mode (no backend required)
+
+In Mock mode all HTTP API calls and WebSocket connections are handled entirely
+in the browser by `src/services/mockApi.ts`.  No backend, database, or API
+keys are needed.
+
+```sh
+npm run dev:mock
+```
+
+The dev server starts at http://localhost:5173 and returns pre-set AI responses
+so you can explore the full chat UI without any external services.
 
 ### Type-Check, Compile and Minify for Production
 

@@ -10,6 +10,27 @@ from rule_service import check_rules
 # Configure logger
 logger = logging.getLogger(__name__)
 
+# When MOCK_AI=true, skip all external API calls and return canned responses
+MOCK_AI = os.getenv("MOCK_AI", "false").lower() == "true"
+
+_MOCK_RESPONSES = [
+    "根据《民法典》相关规定，您描述的情况属于常见民事纠纷。建议您保存好相关证据（合同、转账记录、聊天记录等），并向当地人民法院提起诉讼。如金额较小（5000元以下），可走小额诉讼程序，更为便捷高效。",
+    "您好！根据《劳动合同法》第四十七条，劳动者工作每满一年应支付一个月工资的经济补偿。公司无故辞退属于违法解除，您有权要求双倍经济补偿（即赔偿金）。建议您在离职后一年内向劳动仲裁委员会申请仲裁。",
+    "根据最高法关于民间借贷的司法解释，民间借贷的诉讼时效为三年，从权利人知道或应当知道权利被侵害之日起计算。超过三年未主张权利，法院将不予支持，但对方自愿履行的除外。",
+    "房屋租赁合同中常见风险包括：(1) 出租人非产权人或无授权；(2) 未约定维修责任；(3) 押金退还条款模糊；(4) 提前解约违约金过高。建议签约前核实房产证及产权人身份，并将口头承诺写入合同。",
+    "【模拟模式】这是一条演示回复，系统当前运行于 Mock 模式（MOCK_AI=true），未连接真实 AI 服务。实际部署时请配置有效的 OPENAI_API_KEY 并将 MOCK_AI 设为 false。",
+]
+
+_mock_response_index = 0
+
+def _get_mock_response() -> str:
+    # In asyncio, the event loop is single-threaded so this global counter
+    # is safe from race conditions without an explicit lock.
+    global _mock_response_index
+    response = _MOCK_RESPONSES[_mock_response_index % len(_MOCK_RESPONSES)]
+    _mock_response_index += 1
+    return response
+
 client = AsyncOpenAI(
     api_key=os.getenv("OPENAI_API_KEY", "sk-placeholder"),
     base_url=os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
@@ -45,7 +66,17 @@ async def agent_inference(prompt: str, context: str, user_query: str) -> str:
 
 async def get_legal_response(history: list, latest_input: dict):
     text_content = latest_input.get("content", "")
-    
+
+    # === Mock mode: return canned responses without calling any external service ===
+    if MOCK_AI:
+        logger.info("Mock AI mode: returning canned response")
+        return {
+            "content": _get_mock_response(),
+            "message_type": "text",
+            "media_url": None,
+            "citations": "【模拟模式 - 仅供演示，不代表真实法律意见】"
+        }
+
     # === Level 1: 规则引擎极速拦截 ===
     if text_content and latest_input.get("type") == "text":
         rule_ans, rule_src = check_rules(text_content)

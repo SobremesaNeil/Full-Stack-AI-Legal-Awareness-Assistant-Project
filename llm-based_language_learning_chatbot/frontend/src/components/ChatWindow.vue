@@ -131,7 +131,7 @@
 <script setup lang="ts">
 import { ref, onMounted, nextTick, onBeforeUnmount } from 'vue'
 import { useDisplay } from 'vuetify'
-import { createSession, getSessions, getSession, getWebSocketUrl } from '@/services/api'
+import { createSession, getSessions, getSession, getWebSocketUrl, createWebSocket } from '@/services/api'
 import { saveSessionId, getSessionId, clearSessionId } from '@/utils/storage'
 import type { Message, Session } from '@/types/chat'
 import ChatMessageComponent from './ChatMessage.vue'
@@ -184,7 +184,7 @@ const connectWebSocket = () => {
     ws.value.close()
   }
   
-  ws.value = new WebSocket(wsUrl)
+  ws.value = createWebSocket(wsUrl)
 
   ws.value.onopen = () => {
     console.log('WebSocket connected')
