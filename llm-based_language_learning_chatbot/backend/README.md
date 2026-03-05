@@ -49,7 +49,32 @@ cp .env.example .env
 createdb chatbot
 ```
 
-## 运行
+## 运行（Mock 模式 – 无需数据库或 AI 密钥）
+
+Mock 模式使用 **SQLite**（自动创建本地文件）代替 PostgreSQL，并返回预设的法律问答，无需任何外部服务或 API 密钥。
+
+```bash
+# 1. 将 Mock 环境文件复制为 .env
+cp .env.mock .env
+
+# 2. 安装依赖（aiosqlite 已包含在 requirements.txt 中）
+pip install -r requirements.txt
+
+# 3. 启动开发服务器
+uvicorn main:app --reload
+```
+
+服务器将在 http://localhost:8000 运行，返回预设的 AI 回复，无需真实的 OpenAI 密钥。
+
+### Mock 模式环境变量说明
+
+| 变量 | 说明 |
+|------|------|
+| `DATABASE_URL` | `sqlite+aiosqlite:///./chatbot_mock.db` – 使用本地 SQLite 文件 |
+| `MOCK_AI` | `true` – 跳过 OpenAI 调用，返回预置法律回复 |
+| `ADMIN_DEFAULT_PASSWORD` | 管理员初始密码（需含大写+小写+数字） |
+
+## 运行（正式模式）
 
 启动开发服务器：
 ```bash

@@ -1,6 +1,18 @@
 import { useAuthStore } from '@/stores/auth'
+import {
+  MockWebSocket,
+  mockCreateSession,
+  mockGetSessions,
+  mockGetSession,
+  mockLoginUser,
+  mockRegisterUser,
+} from './mockApi'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'
+
+// When VITE_MOCK_MODE=true the frontend runs fully offline (no backend needed).
+// Start the dev server with: npm run dev:mock
+const MOCK_MODE = import.meta.env.VITE_MOCK_MODE === 'true'
 
 // Fix WebSocket protocol: http/https -> ws/wss
 const WS_BASE_URL = API_BASE_URL.replace(/^https?/, (match) => {
@@ -31,6 +43,8 @@ async function authFetch(url: string, options: RequestInit = {}) {
 
 // --- Auth ---
 export async function loginUser(username: string, password: string) {
+  if (MOCK_MODE) return mockLoginUser(username, password)
+
   const formData = new URLSearchParams()
   formData.append('username', username)
   formData.append('password', password)
@@ -45,6 +59,8 @@ export async function loginUser(username: string, password: string) {
 }
 
 export async function registerUser(user: any) {
+  if (MOCK_MODE) return mockRegisterUser(user)
+
   const response = await fetch(`${API_BASE_URL}/register`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -56,17 +72,23 @@ export async function registerUser(user: any) {
 
 // --- Chat & Session ---
 export async function createSession() {
+  if (MOCK_MODE) return mockCreateSession()
+
   const response = await fetch(`${API_BASE_URL}/sessions/`, { method: 'POST' })
   return response.json()
 }
 
 export async function getSessions() {
+  if (MOCK_MODE) return mockGetSessions()
+
   const response = await fetch(`${API_BASE_URL}/sessions/`)
   if (!response.ok) throw new Error('Failed to load sessions')
   return response.json()
 }
 
 export async function getSession(sessionId: string) {
+  if (MOCK_MODE) return mockGetSession(sessionId)
+
   const response = await fetch(`${API_BASE_URL}/sessions/${sessionId}`)
   return response.json()
 }
@@ -75,8 +97,22 @@ export function getWebSocketUrl(sessionId: string): string {
   return `${WS_BASE_URL}/ws/${sessionId}`
 }
 
+/**
+ * Factory that returns either a real WebSocket or a MockWebSocket depending
+ * on whether VITE_MOCK_MODE is enabled.  Use this instead of `new WebSocket()`
+ * so that the mock can intercept connections without requiring a backend.
+ */
+export function createWebSocket(url: string): WebSocket {
+  if (MOCK_MODE) {
+    return new MockWebSocket(url) as unknown as WebSocket
+  }
+  return new WebSocket(url)
+}
+
 // --- Feedback ---
 export async function submitFeedback(messageId: number, score: number) {
+  if (MOCK_MODE) return Promise.resolve({ status: 'success' })
+
   // 反馈通常不需要强制登录，但如果有 Token 最好带上
   return authFetch('/feedback/', {
     method: 'POST',
