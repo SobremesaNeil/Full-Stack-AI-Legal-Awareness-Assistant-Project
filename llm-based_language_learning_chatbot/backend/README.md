@@ -58,6 +58,30 @@ uvicorn main:app --reload
 
 服务器将在 http://localhost:8000 运行
 
+## 使用 Mock 模式运行（无需真实 API Key 或数据库）
+
+如果您没有 OpenAI API Key 或本地 PostgreSQL 实例，可以使用 **Mock 模式** 快速启动项目：
+
+```bash
+# 方式一：通过环境变量启动
+USE_MOCK=true uvicorn main:app --reload
+
+# 方式二：在 .env 文件中设置
+echo "USE_MOCK=true" >> .env
+uvicorn main:app --reload
+```
+
+**Mock 模式的行为：**
+
+| 功能 | 正常模式 | Mock 模式 |
+|------|----------|-----------|
+| 数据库 | PostgreSQL（需要 `DATABASE_URL`） | SQLite（自动创建 `mock.db`） |
+| AI 回复 | 调用 OpenAI API（需要 `OPENAI_API_KEY`） | 返回预设的模拟法律回复 |
+| RAG 知识库 | ChromaDB + OpenAI Embeddings | 跳过（直接返回结果） |
+| 规则引擎 | 完整功能 | 完整功能（不受影响） |
+
+> **注意：** Mock 模式仅适用于本地开发和功能演示，不应在生产环境中使用。
+
 ## API 文档
 
 启动服务器后访问：

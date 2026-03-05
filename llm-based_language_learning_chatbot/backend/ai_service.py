@@ -2,6 +2,7 @@ import os
 import asyncio
 import base64
 import logging
+import itertools
 from openai import AsyncOpenAI
 from fastapi.concurrency import run_in_threadpool
 from rag_service import search_knowledge
@@ -10,10 +11,46 @@ from rule_service import check_rules
 # Configure logger
 logger = logging.getLogger(__name__)
 
+USE_MOCK = os.getenv("USE_MOCK", "false").lower() == "true"
+
 client = AsyncOpenAI(
     api_key=os.getenv("OPENAI_API_KEY", "sk-placeholder"),
     base_url=os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
 )
+
+MOCK_RESPONSES = [
+    "根据《中华人民共和国合同法》第八条，依法成立的合同，对当事人具有法律约束力。建议您保留好合同原件及相关证据。",
+    "您好！根据您的问题，建议您咨询专业律师以获取针对性法律意见。如需了解更多，请提供详细情况。",
+    "【模拟回复】这是一个测试回复，用于演示系统功能。在实际使用中，本系统将调用 AI 模型提供专业法律建议。",
+    "根据《劳动合同法》相关规定，劳动者依法享有相应权益保障。建议您收集并保存相关证据，必要时可申请劳动仲裁。",
+    "根据您描述的情况，建议您：1. 保留相关证据；2. 尝试协商解决；3. 如协商失败，可通过法律途径维权。",
+]
+
+# Use itertools.cycle so index advancement is stateless and naturally
+# round-robins without needing a mutable global counter.
+_mock_cycle = itertools.cycle(MOCK_RESPONSES)
+
+async def get_mock_legal_response(latest_input: dict) -> dict:
+    """Return a pre-defined mock response without calling any external API."""
+    text = latest_input.get("content", "")
+    input_type = latest_input.get("type", "text")
+
+    if input_type == "image":
+        content = "【模拟图片分析】系统已收到您上传的图片。在 Mock 模式下，图片内容分析功能不可用。请配置真实的 AI 服务后使用此功能。"
+    else:
+        base_response = next(_mock_cycle)
+        content = (
+            f"【模拟回复 - 针对您的问题「{text[:30]}{'...' if len(text) > 30 else ''}」】\n\n{base_response}"
+            if text
+            else base_response
+        )
+
+    return {
+        "content": content,
+        "message_type": "text",
+        "media_url": None,
+        "citations": "【Mock 模式 - 仅供测试使用，非真实法律建议】",
+    }
 
 LAWYER_AGENT_PROMPT = """...（同原代码）..."""
 JUDGE_AGENT_PROMPT = """...（同原代码）..."""
@@ -44,6 +81,10 @@ async def agent_inference(prompt: str, context: str, user_query: str) -> str:
         return ""
 
 async def get_legal_response(history: list, latest_input: dict):
+    # === Mock mode: skip all external calls ===
+    if USE_MOCK:
+        return await get_mock_legal_response(latest_input)
+
     text_content = latest_input.get("content", "")
     
     # === Level 1: 规则引擎极速拦截 ===

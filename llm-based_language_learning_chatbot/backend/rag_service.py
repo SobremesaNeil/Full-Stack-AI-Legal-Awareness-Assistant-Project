@@ -9,29 +9,40 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# 初始化 ChromaDB (本地持久化)
-CHROMA_DATA_PATH = "./chroma_db"
-client = chromadb.PersistentClient(path=CHROMA_DATA_PATH)
+USE_MOCK = os.getenv("USE_MOCK", "false").lower() == "true"
 
-api_key = os.getenv("OPENAI_API_KEY")
-if not api_key:
-    logger.error("无 OpenAI Key，RAG 服务将不可用")
-    logger.warning("未检测到 OPENAI_API_KEY，RAG 功能将无法正常工作。")
+if USE_MOCK:
+    # In mock mode, skip ChromaDB initialisation entirely to avoid requiring
+    # an OpenAI API key or a persistent vector store.
+    logger.info("Mock 模式已启用：RAG 知识库已禁用。")
+    collection = None
     openai_ef = None
 else:
-    # 【修复重点】：这里必须要有缩进！
-    openai_ef = embedding_functions.OpenAIEmbeddingFunction(
-        api_key=api_key or "sk-placeholder", 
-        model_name="text-embedding-3-small"
+    # 初始化 ChromaDB (本地持久化)
+    CHROMA_DATA_PATH = "./chroma_db"
+    client = chromadb.PersistentClient(path=CHROMA_DATA_PATH)
+
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        logger.error("无 OpenAI Key，RAG 服务将不可用")
+        logger.warning("未检测到 OPENAI_API_KEY，RAG 功能将无法正常工作。")
+        openai_ef = None
+    else:
+        # 【修复重点】：这里必须要有缩进！
+        openai_ef = embedding_functions.OpenAIEmbeddingFunction(
+            api_key=api_key or "sk-placeholder", 
+            model_name="text-embedding-3-small"
+        )
+
+    # 获取或创建集合
+    collection = client.get_or_create_collection(
+        name="legal_knowledge",
+        embedding_function=openai_ef if openai_ef else None
     )
 
-# 获取或创建集合
-collection = client.get_or_create_collection(
-    name="legal_knowledge",
-    embedding_function=openai_ef if openai_ef else None
-)
-
 def add_legal_document(content: str, source: str):
+    if collection is None:
+        return None
     try:
         doc_id = str(uuid.uuid4())
         collection.add(
@@ -45,6 +56,8 @@ def add_legal_document(content: str, source: str):
         return None
 
 def search_knowledge(query: str, n_results: int = 3):
+    if collection is None:
+        return []
     try:
         if not openai_ef: return []
         results = collection.query(
@@ -83,6 +96,9 @@ def load_initial_data_from_file(file_path: str = "legal_data.json"):
         logger.error(f"加载初始数据时发生未知错误: {e}")
 
 def init_knowledge_base():
+    if collection is None:
+        logger.info("Mock 模式：跳过知识库初始化。")
+        return
     if collection.count() == 0:
         logger.info("正在初始化法律知识库...")
         load_initial_data_from_file()
