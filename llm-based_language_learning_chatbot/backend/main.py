@@ -12,6 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
+from sqlalchemy.orm import selectinload
 
 # 本地模块导入
 import models
@@ -28,11 +29,12 @@ logger = logging.getLogger(__name__)
 
 # SECURITY: Validate required environment variables at startup
 def validate_environment():
-    """Validate all required environment variables are set"""
-    required_vars = ["DATABASE_URL"]
-    for var in required_vars:
-        if not os.getenv(var):
-            raise ValueError(f"Missing required environment variable: {var}")
+    """Validate required environment variables are set"""
+    # DATABASE_URL has a SQLite default in database.py; only warn if not set
+    if not os.getenv("DATABASE_URL"):
+        logger.warning("DATABASE_URL not set; using SQLite default (not suitable for production)")
+    if not os.getenv("OPENAI_API_KEY"):
+        logger.warning("OPENAI_API_KEY not set; AI responses will be unavailable")
 
     # Log environment for debugging (be careful with secrets)
     logger.info(f"Environment: {os.getenv('ENVIRONMENT', 'development')}")
@@ -205,6 +207,16 @@ async def create_session(db: AsyncSession = Depends(get_db)):
     await db.refresh(db_session)
     return db_session
 
+@chat_router.get("/sessions/", response_model=List[schemas.Session])
+async def list_sessions(db: AsyncSession = Depends(get_db)):
+    result = await db.execute(
+        select(models.Session)
+        .options(selectinload(models.Session.messages))
+        .order_by(models.Session.created_at.desc())
+    )
+    sessions = result.scalars().all()
+    return sessions
+
 @chat_router.get("/sessions/{session_id}", response_model=schemas.Session)
 async def get_session(session_id: str, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(models.Session).filter(models.Session.id == session_id))
@@ -218,6 +230,16 @@ async def get_session(session_id: str, db: AsyncSession = Depends(get_db)):
     )
     session.messages = msg_result.scalars().all()
     return session
+
+@chat_router.delete("/sessions/{session_id}")
+async def delete_session(session_id: str, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(models.Session).filter(models.Session.id == session_id))
+    session = result.scalars().first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    await db.delete(session)
+    await db.commit()
+    return {"status": "deleted"}
 
 @chat_router.post("/feedback/")
 async def submit_feedback(feedback: schemas.FeedbackCreate, db: AsyncSession = Depends(get_db)):

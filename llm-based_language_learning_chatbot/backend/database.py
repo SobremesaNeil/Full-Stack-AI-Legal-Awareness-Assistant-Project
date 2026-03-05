@@ -5,10 +5,11 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# 注意这里增加了 +asyncpg
+# Use SQLite for local development (zero-setup). Set DATABASE_URL env var to
+# point to PostgreSQL (postgresql+asyncpg://...) in production.
 SQLALCHEMY_DATABASE_URL = os.getenv(
     "DATABASE_URL",
-    "postgresql+asyncpg://postgres:postgres@localhost:5432/chatbot"
+    "sqlite+aiosqlite:///./chatbot.db"
 )
 
 # 使用 create_async_engine

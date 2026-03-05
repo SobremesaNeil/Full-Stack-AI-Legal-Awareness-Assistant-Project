@@ -137,6 +137,14 @@ export async function deleteRule(ruleId: number) {
   return response.json()
 }
 
+export async function deleteSession(sessionId: string) {
+  const response = await fetch(`${API_BASE_URL}/sessions/${sessionId}`, {
+    method: 'DELETE'
+  })
+  if (!response.ok) throw new Error('删除会话失败')
+  return response.json()
+}
+
 // --- File Upload ---
 export async function uploadFile(file: File) {
   const formData = new FormData()
