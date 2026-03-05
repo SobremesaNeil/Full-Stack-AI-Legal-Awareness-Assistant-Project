@@ -196,6 +196,10 @@ async def delete_rule(rule_id: int, admin: models.User = Depends(get_current_adm
 # 3. 聊天与会话模块
 chat_router = APIRouter(tags=["Chat"])
 
+def _session_to_schema(session: models.Session, messages: list) -> schemas.Session:
+    """Convert ORM Session to Pydantic schema, avoiding lazy-load of relationships."""
+    return schemas.Session(id=session.id, created_at=session.created_at, messages=messages)
+
 @chat_router.post("/sessions/", response_model=schemas.Session)
 async def create_session(db: AsyncSession = Depends(get_db)):
     session_id = str(uuid.uuid4())
@@ -203,7 +207,7 @@ async def create_session(db: AsyncSession = Depends(get_db)):
     db.add(db_session)
     await db.commit()
     await db.refresh(db_session)
-    return db_session
+    return _session_to_schema(db_session, [])
 
 @chat_router.get("/sessions/{session_id}", response_model=schemas.Session)
 async def get_session(session_id: str, db: AsyncSession = Depends(get_db)):
@@ -216,8 +220,8 @@ async def get_session(session_id: str, db: AsyncSession = Depends(get_db)):
         .filter(models.Message.session_id == session_id)
         .order_by(models.Message.created_at)
     )
-    session.messages = msg_result.scalars().all()
-    return session
+    messages = msg_result.scalars().all()
+    return _session_to_schema(session, messages)
 
 @chat_router.post("/feedback/")
 async def submit_feedback(feedback: schemas.FeedbackCreate, db: AsyncSession = Depends(get_db)):

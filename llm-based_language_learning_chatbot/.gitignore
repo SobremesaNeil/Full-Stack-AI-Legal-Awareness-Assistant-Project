@@ -93,6 +93,10 @@ Desktop.ini
 *.swp
 *~
 
+# ChromaDB persistent storage
+chroma_db/
+chroma.sqlite3
+
 # Temporary files
 *.tmp
 *.temp

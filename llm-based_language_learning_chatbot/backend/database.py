@@ -5,14 +5,17 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# 注意这里增加了 +asyncpg
+# 注意这里增加了 +asyncpg (PostgreSQL) 或 +aiosqlite (SQLite)
 SQLALCHEMY_DATABASE_URL = os.getenv(
     "DATABASE_URL",
-    "postgresql+asyncpg://postgres:postgres@localhost:5432/chatbot"
+    "sqlite+aiosqlite:///./chatbot.db"
 )
 
+# SQLite 需要额外配置 check_same_thread=False
+db_connect_args = {"check_same_thread": False} if SQLALCHEMY_DATABASE_URL.startswith("sqlite") else {}
+
 # 使用 create_async_engine
-engine = create_async_engine(SQLALCHEMY_DATABASE_URL, echo=True)
+engine = create_async_engine(SQLALCHEMY_DATABASE_URL, echo=True, connect_args=db_connect_args)
 
 # 使用 AsyncSession
 AsyncSessionLocal = sessionmaker(
