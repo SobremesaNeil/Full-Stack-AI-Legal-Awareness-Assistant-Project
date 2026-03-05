@@ -1,3 +1,6 @@
 node_modules/
 .env
 **/backend/.env
+chroma_db/
+*.db
+*.sqlite3
