@@ -10,8 +10,8 @@ aiofiles
 azure-cognitiveservices-speech
 httpx
 asyncpg
-python-multipart
+aiosqlite
 chromadb
-passlib[bcrypt]
+bcrypt
 python-jose[cryptography]
 tiktoken
