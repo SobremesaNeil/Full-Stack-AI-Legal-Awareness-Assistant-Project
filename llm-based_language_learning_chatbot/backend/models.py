@@ -16,7 +16,7 @@ class User(Base):
     role = Column(String, default="user") 
     created_at = Column(DateTime, default=get_utc_now)
     sessions = relationship("Session", back_populates="user")
-    tickets = relationship("Ticket", back_populates="user")
+    tickets = relationship("Ticket", foreign_keys="[Ticket.user_id]", back_populates="user")
 
 class Session(Base):
     __tablename__ = "sessions"
