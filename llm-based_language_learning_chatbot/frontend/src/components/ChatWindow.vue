@@ -131,7 +131,7 @@
 <script setup lang="ts">
 import { ref, onMounted, nextTick, onBeforeUnmount } from 'vue'
 import { useDisplay } from 'vuetify'
-import { createSession, getSessions, getSession, getWebSocketUrl } from '@/services/api'
+import { createSession, getSessions, getSession, getWebSocketUrl, deleteSession } from '@/services/api'
 import { saveSessionId, getSessionId, clearSessionId } from '@/utils/storage'
 import type { Message, Session } from '@/types/chat'
 import ChatMessageComponent from './ChatMessage.vue'
@@ -300,6 +300,8 @@ const deleteSessionById = async (sessionToDelete: string) => {
 
     if (!confirmed) return
 
+    await deleteSession(sessionToDelete)
+
     if (sessionToDelete === currentSessionId.value) {
       if (ws.value) {
         ws.value.close()
@@ -308,9 +310,9 @@ const deleteSessionById = async (sessionToDelete: string) => {
       messages.value = []
       clearSessionId()
     }
-    
-    // 提示用户：后端接口暂未实现，这里仅做前端状态清理演示
-    showMessage('后端暂未实现删除接口，仅演示前端交互', 'warning')
+
+    await loadSessions()
+    showMessage('会话已删除', 'success')
   } catch (error) {
     console.error('Failed to delete session:', error)
     showMessage('删除会话失败', 'error')

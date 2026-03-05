@@ -205,6 +205,12 @@ async def create_session(db: AsyncSession = Depends(get_db)):
     await db.refresh(db_session)
     return db_session
 
+@chat_router.get("/sessions/", response_model=List[schemas.Session])
+async def list_sessions(db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(models.Session).order_by(models.Session.created_at.desc()))
+    sessions = result.scalars().all()
+    return sessions
+
 @chat_router.get("/sessions/{session_id}", response_model=schemas.Session)
 async def get_session(session_id: str, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(models.Session).filter(models.Session.id == session_id))
@@ -218,6 +224,16 @@ async def get_session(session_id: str, db: AsyncSession = Depends(get_db)):
     )
     session.messages = msg_result.scalars().all()
     return session
+
+@chat_router.delete("/sessions/{session_id}")
+async def delete_session(session_id: str, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(models.Session).filter(models.Session.id == session_id))
+    session = result.scalars().first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    await db.delete(session)
+    await db.commit()
+    return {"status": "deleted"}
 
 @chat_router.post("/feedback/")
 async def submit_feedback(feedback: schemas.FeedbackCreate, db: AsyncSession = Depends(get_db)):
